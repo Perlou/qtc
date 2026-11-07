@@ -19,7 +19,7 @@
 
 环境要求：
     - pip install pandas numpy matplotlib akshare
-    - 无网络时可用 QTC_OFFLINE=1 运行（使用合成数据）
+    - 无网络时可用 QTC_OFFLINE=1 运行（有本地缓存读缓存，否则用合成数据）
 """
 
 import sys
@@ -38,6 +38,7 @@ from utils.plotting import save_figure, setup_chinese_font
 
 load_dotenv()
 
+SERIES_COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300"]  # 多序列按固定顺序取色
 START, END = "20180101", "20241231"
 STOCKS = {
     "600519": "贵州茅台",
@@ -82,9 +83,16 @@ def load_panel() -> pd.DataFrame:
     print("   " + "  ".join(f"{c}:{n}" for c, n in na.items()))
     if na.sum() > 0:
         code = na.idxmax()
-        missing = wide.index[wide[code].isna()]
-        print(f"   {code} {STOCKS[code]} 缺失区间：{missing[0].date()} ~ {missing[-1].date()}（共 {len(missing)} 天）")
-        print("   → 宽表按日期外连接对齐，某只股票当天没有数据就是 NaN")
+        # 把连续的 NaN 切成"段"：值发生变化时 cumsum + 1，同一段内编号相同（游程编码的常用技巧）
+        is_na = wide[code].isna()
+        seg_id = (is_na != is_na.shift()).cumsum()[is_na]
+        print(f"   {code} {STOCKS[code]} 的缺失段：")
+        segments = [seg for _, seg in seg_id.groupby(seg_id)]
+        for seg in segments[:5]:
+            print(f"      {seg.index[0].date()} ~ {seg.index[-1].date()}（{len(seg)} 个交易日）")
+        if len(segments) > 5:
+            print(f"      ……共 {len(segments)} 段")
+        print("   → 宽表按日期外连接对齐，某只股票当天没有数据就是 NaN；连续多日缺失通常是停牌")
     else:
         print("   当前数据没有缺失（离线合成数据各股票日期完全相同）")
     return wide
@@ -183,7 +191,7 @@ def ts_vs_cross_section(wide: pd.DataFrame):
     corr = rets.corr()
     print("🔗 日收益相关系数矩阵：")
     print(corr.round(2).to_string())
-    tri = corr.where(np.triu(np.ones(corr.shape, dtype=bool), k=1)).stack()
+    tri = corr.where(np.triu(np.ones(corr.shape, dtype=bool), k=1)).stack().dropna()  # 上三角，去掉 NaN
     print(f"   相关最高：{tri.idxmax()} = {tri.max():.2f}；最低：{tri.idxmin()} = {tri.min():.2f}")
     return rets, corr
 
@@ -200,11 +208,13 @@ def groupby_on_long(long_df: pd.DataFrame, wide: pd.DataFrame):
 
     wrong = long_df["close"].pct_change(fill_method=None)
     right = long_df.groupby("code")["close"].pct_change(fill_method=None)
-    bad = (wrong - right).abs() > 1e-12
+    # 注意：NaN 与任何数比较都是 False，"(wrong - right).abs() > 0" 会漏掉 right 为 NaN 的行
+    same = np.isclose(wrong, right) | (wrong.isna() & right.isna())
+    bad = ~same
     first_rows = long_df.groupby("code").head(1).index
     print(f"""
     ❌ long_df["close"].pct_change()：
-       有 {bad.sum()} 行与正确结果不同，都出现在每只股票的第一行附近
+       有 {bad.sum()} 行与正确结果不同，全部是每只股票的第一行：{bad[first_rows].sum() == bad.sum()}
        例：第 {first_rows[1]} 行（{long_df.loc[first_rows[1], 'code']} 的第一天）
            错误值 {wrong.iloc[first_rows[1]]:+.2%} ← 用的是上一只股票最后一天的价格
     ✅ long_df.groupby("code")["close"].pct_change()
@@ -264,9 +274,11 @@ def tradable_mask(wide: pd.DataFrame):
     code = wide.isna().sum().idxmax()
     n_na = int(wide[code].isna().sum())
     print(f"📋 以 {code} 为例（NaN {n_na} 天）：")
-    if n_na > 0:
-        last_na = wide.index[wide[code].isna()][-1]
-        resume = wide.index[wide.index.get_loc(last_na) + 1]
+    # 复牌日 = 今天有价、昨天没价，且不是这只股票的第一天
+    resumes = wide.index[wide[code].notna() & wide[code].shift(1).isna()]
+    resumes = resumes[resumes > wide[code].first_valid_index()]
+    if len(resumes) > 0:
+        resume = resumes[-1]
         print(f"""   ffill 后：停牌期间价格不变、收益为 0 → 净值估值合理
    但复牌日 {resume.date()} 的收益：
       不填充：{rets_raw.loc[resume, code]}（前一天是 NaN，无法计算）
@@ -274,7 +286,7 @@ def tradable_mask(wide: pd.DataFrame):
    ⚠️ 如果策略假设停牌期间也能按 ffill 的价格买卖，就会严重失真 → 必须配合 tradable 表使用
         """)
     else:
-        print("   当前数据没有 NaN，无法演示停牌；联网运行可看到真实停牌数据")
+        print("   当前数据没有停牌后复牌的情形，无法演示；联网运行可看到真实停牌数据")
 
     print(f"   可交易状态表 tradable = wide.notna()：形状 {tradable.shape}，"
           f"整体可交易比例 {tradable.to_numpy().mean():.2%}")
@@ -289,6 +301,7 @@ def tradable_mask(wide: pd.DataFrame):
 
 def plot_panel(wide: pd.DataFrame, corr: pd.DataFrame):
     setup_chinese_font()
+    plt.rcParams["axes.prop_cycle"] = plt.cycler(color=SERIES_COLORS)
     fig, axes = plt.subplots(1, 2, figsize=(14, 5), gridspec_kw={"width_ratios": [1.6, 1]})
 
     norm = wide / wide.bfill().iloc[0]
@@ -317,7 +330,7 @@ def plot_panel(wide: pd.DataFrame, corr: pd.DataFrame):
 
 def main():
     if is_offline():
-        print("⚠️ 离线模式：使用合成数据，数值仅用于演示代码，不代表真实市场\n")
+        print("⚠️ 离线模式：有本地缓存的数据读缓存，其余用合成数据（合成数值不代表真实市场）\n")
     wide = load_panel()
     long_df = reshape_demo(wide)
     _, corr = ts_vs_cross_section(wide)

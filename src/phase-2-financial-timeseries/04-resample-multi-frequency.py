@@ -20,7 +20,7 @@
 
 环境要求：
     - pip install pandas numpy matplotlib akshare
-    - 无网络时可用 QTC_OFFLINE=1 运行（使用合成数据）
+    - 无网络时可用 QTC_OFFLINE=1 运行（有本地缓存读缓存，否则用合成数据）
 """
 
 import sys
@@ -38,6 +38,7 @@ from utils.plotting import save_figure, setup_chinese_font
 
 load_dotenv()
 
+SERIES_COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300"]  # 多序列按固定顺序取色
 START, END = "20180101", "20241231"
 SYMBOL, NAME = "600519", "贵州茅台"
 
@@ -75,8 +76,11 @@ def ohlcv_downsample(df: pd.DataFrame):
     monthly = to_bars(df, "ME")
     empty = raw_weeks.index[raw_weeks["close"].isna()]
     print(f"📊 {len(df)} 根日线 → {len(weekly)} 根周线、{len(monthly)} 根月线")
-    print(f"   resample 产生了 {len(empty)} 个空周（整周休市，如春节、国庆），需要 dropna 删除：")
-    print("   " + ", ".join(str(d.date()) for d in empty[:8]) + (" ..." if len(empty) > 8 else ""))
+    if len(empty) > 0:
+        print(f"   resample 产生了 {len(empty)} 个空周（整周休市，如春节、国庆），需要 dropna 删除：")
+        print("   " + ", ".join(str(d.date()) for d in empty[:8]) + (" ..." if len(empty) > 8 else ""))
+    else:
+        print("   当前数据没有空周（合成数据不含节假日）；真实 A 股的春节、国庆会产生空周，需要 dropna 删除")
 
     print("\n📋 前 3 根周线（不复权价格，K 线用真实成交价）：")
     print(weekly.head(3).to_string(formatters={
@@ -126,7 +130,8 @@ def label_alignment(df: pd.DataFrame):
     print("   → 数值完全一样，只是\"贴的日期标签\"不同")
 
     # 后果：按标签把月度信号合并回日线
-    signal = (m_resample.pct_change() > 0).astype(int).rename("signal")
+    # 先 dropna：第一个月没有收益，NaN > 0 会被算成 False，变成一个虚假的"看空"信号
+    signal = (m_resample.pct_change().dropna() > 0).astype(int).rename("signal")
     merged = df[["adj_close"]].join(signal, how="left")
     print(f"""
     ❌ 后果：把月度信号按标签 join 回日线
@@ -139,6 +144,8 @@ def label_alignment(df: pd.DataFrame):
     """)
     sig_daily = signal.reindex(close.index, method="ffill").shift(1)
     print(f"   方法 2 结果：日线上有效信号 {sig_daily.notna().sum()} 天（每个月的信号都延续到下个月）")
+    print(f"""   ⚠️ 方法 2 的细节：标签落在非交易日的 {(~in_index).sum()} 个月，ffill 已经把信号推到下月第一个交易日，
+      再 shift(1) 就会多晚一天生效。这偏保守、不构成前视，但各月生效时点不一致；方法 1 没有这个问题""")
 
 
 # ==================== 第三部分：升采样与信息可得时间 ====================
@@ -181,8 +188,9 @@ def upsample_point_in_time(df: pd.DataFrame):
     #    merge_asof 要求两边 dtype 完全一致，先统一成 datetime64[ns]
     dates = df.index.astype("datetime64[ns]")
     fund = fund.astype({"report_period": "datetime64[ns]", "announce_date": "datetime64[ns]"})
-    print(f"\n⚙️ pandas 3 细节：行情索引 dtype 为 {df.index.dtype}，示意数据为 {make_fundamentals()['announce_date'].dtype}，"
-          "merge_asof 前需统一精度")
+    raw_dtypes = (df.index.dtype, make_fundamentals()["announce_date"].dtype)
+    if raw_dtypes[0] != raw_dtypes[1]:
+        print(f"\n⚙️ pandas 3 细节：行情索引 dtype 为 {raw_dtypes[0]}，示意数据为 {raw_dtypes[1]}，不统一会抛 MergeError")
     wrong = fund.set_index("report_period")["roe"].reindex(dates, method="ffill")
     # merge_asof：对每个交易日，找"公告日 ≤ 当天"的最近一条记录 —— 时点对齐的利器
     right = pd.merge_asof(
@@ -281,7 +289,7 @@ def intraday_resample():
     print(f"""
     ⚠️ 默认参数 resample("30min")（closed="left", label="left"）得到 {len(bars_default.dropna())} 根非空 K 线，
        第一根标签是 {bars_default.dropna().index[0].time()}，最后一根是 {bars_default.dropna().index[-1].time()}
-       —— 15:00 那根分钟线被单独切成了一根"K 线"，与行情软件对不上
+       —— 11:30 和 15:00 这两根分钟线各自被单独切成了一根"K 线"，与行情软件对不上
 
     📌 其他市场：
        - 期货夜盘（21:00 起）在交易所口径上归属下一个交易日，按自然日 resample 会切错，要按交易日字段分组
@@ -294,6 +302,7 @@ def intraday_resample():
 
 def plot_frequencies(df: pd.DataFrame, weekly: pd.DataFrame, monthly: pd.DataFrame):
     setup_chinese_font()
+    plt.rcParams["axes.prop_cycle"] = plt.cycler(color=SERIES_COLORS)
     fig, ax = plt.subplots(figsize=(12, 5))
     sub = slice("2024-01-01", "2024-12-31")
     ax.plot(df.loc[sub].index, df.loc[sub, "close"], lw=0.8, label="日线收盘")
@@ -310,7 +319,7 @@ def plot_frequencies(df: pd.DataFrame, weekly: pd.DataFrame, monthly: pd.DataFra
 
 def main():
     if is_offline():
-        print("⚠️ 离线模式：使用合成数据，数值仅用于演示代码，不代表真实市场\n")
+        print("⚠️ 离线模式：有本地缓存的数据读缓存，其余用合成数据（合成数值不代表真实市场）\n")
     df = get_stock_daily_adj(SYMBOL, START, END)
     weekly, monthly = ohlcv_downsample(df)
     label_alignment(df)

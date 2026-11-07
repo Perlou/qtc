@@ -207,7 +207,8 @@ def falling_knife(close: pd.Series, z: pd.Series, ret: pd.Series, bt_mr: pd.Data
     seg = bt_mr["pos"].loc[worst_day:]
     end_day = seg[seg != seg.iloc[0]].index[0] if (seg != seg.iloc[0]).any() else seg.index[-1]
     print(f"""
-    价格持续下跌时，z 可能长时间低于 -2，均值回归策略一直拿着多头，亏损不断扩大。
+    价格单边运行时（持续下跌时拿着多头，或持续上涨时拿着空头），z 迟迟回不到 0，
+    均值回归策略一直扛着亏损仓位，亏损不断扩大。
     📉 本次回测最差的一笔：{worst_day.date()} 开仓，{end_day.date()} 平仓，
        方向 {'做多' if seg.iloc[0] > 0 else '做空'}，收益 {trades.min():+.1%}，
        期间 z 的最小 / 最大值 {z.loc[worst_day:end_day].min():+.2f} / {z.loc[worst_day:end_day].max():+.2f}
@@ -235,7 +236,8 @@ def falling_knife(close: pd.Series, z: pd.Series, ret: pd.Series, bt_mr: pd.Data
        用 z 定义止损有盲区；按价格（或按 ATR）设置止损才能直接限制单笔亏损。""")
     print(f"""
     💡 止损的目的不是提高收益，而是截断左尾 —— 对比上表的"最差单笔"：
-       无止损 {worst['无止损']:+.1%}，价格止损 {worst['价格止损(5%)']:+.1%}。
+       无止损 {worst['无止损']:+.1%}，价格止损 {worst['价格止损(5%)']:+.1%}
+       （价格止损的最差单笔可能超过 5%：收盘才判断、次日才执行，中间还可能跳空）。
        但止损也会把一部分"本来会回归"的交易提前砍掉，并增加换手，总收益不一定改善。
        Phase 6 会把均值回归的对象换成"有经济学理由保证平稳的价差"，从根源上降低接飞刀的风险。
     """)

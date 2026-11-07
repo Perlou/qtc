@@ -20,7 +20,7 @@
 
 环境要求：
     - pip install pandas numpy matplotlib akshare
-    - 无网络时可用 QTC_OFFLINE=1 运行（使用合成数据）
+    - 无网络时可用 QTC_OFFLINE=1 运行（有本地缓存读缓存，否则用合成数据）
 """
 
 import sys
@@ -38,6 +38,7 @@ from utils.plotting import save_figure, setup_chinese_font
 
 load_dotenv()
 
+SERIES_COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300"]  # 多序列按固定顺序取色
 TRADING_DAYS = 252
 START, END = "20180101", "20241231"
 SYMBOL, NAME = "600519", "贵州茅台"
@@ -129,10 +130,23 @@ def rolling_volatility() -> pd.DataFrame:
     }))
     full = ret.std() * ann
     peak_day = vols["vol_20"].idxmax()
+    lo, hi = vols["vol_20"].min(), vols["vol_20"].max()
+
+    # 对照实验：假设真实波动恒定，只有 20 个样本的估计值自己会跳动多大？
+    constant = pd.Series(np.random.default_rng(0).normal(0, ret.std(), len(ret)))
+    control = constant.rolling(20).std() * ann
     print(f"""
     📌 全样本年化波动只有一个数：{full:.1%}
-       但 20 日滚动波动在 {vols['vol_20'].min():.1%} ~ {vols['vol_20'].max():.1%} 之间变化，
-       峰值出现在 {peak_day.date()} —— 市场的"状态"是变化的
+       20 日滚动波动在 {lo:.1%} ~ {hi:.1%} 之间变化，峰值出现在 {peak_day.date()}
+
+    🧪 这个变化全是"市场状态"吗？做个对照：
+       假设波动恒定为 {full:.1%}，20 日估计也会在 {control.min():.1%} ~ {control.max():.1%} 之间跳动 —— 这部分纯属估计噪声
+    """)
+    if hi > control.max() * 1.2:
+        print("    → 实际峰值明显超出噪声范围：波动率确实随市场状态变化，不只是估计误差")
+    else:
+        print("    → 实际范围与噪声相当：这份数据看不出状态变化（合成数据的波动本来就是恒定的）")
+    print("""
     💡 "日变化标准差"衡量估计值自身的抖动：窗口越短，估计越不稳定
     """)
     vols["close"] = close
@@ -204,7 +218,7 @@ def zscore_and_correlation(vols: pd.DataFrame):
     print(f"""
     📏 60 日价格 Z-score = (价格 - 60 日均值) / 60 日标准差
        最新值：{z.iloc[-1]:+.2f}
-       |z| > 2 的天数占比：{(z.abs() > 2).mean():.1%}（有效样本 {z.count()} 天）
+       |z| > 2 的天数占比：{(z.dropna().abs() > 2).mean():.1%}（有效样本 {z.count()} 天，已排除预热期的 NaN）
        最低点：{z.min():+.2f}（{z.idxmin().date()}），最高点：{z.max():+.2f}（{z.idxmax().date()}）
     """)
 
@@ -224,7 +238,8 @@ def zscore_and_correlation(vols: pd.DataFrame):
     🔗 {NAME} 与沪深 300 的 60 日滚动相关系数：
        全样本相关：{pair['stock'].corr(pair['hs300']):.2f}
        滚动相关范围：{roll_corr.min():.2f} ~ {roll_corr.max():.2f}，中位数 {roll_corr.median():.2f}
-       💡 相关性也是时变的，用一个全样本数字描述两者关系会丢失很多信息
+       💡 滚动相关的变化一部分是真实时变，一部分是估计噪声
+          （真实相关接近 0 时，60 日样本的标准误约 1/√60 ≈ {1 / np.sqrt(60):.2f}），解读时要把噪声扣掉
     """)
     return roll_corr
 
@@ -282,6 +297,7 @@ def pitfalls(vols: pd.DataFrame):
 
 def plot_rolling(vols: pd.DataFrame, roll_corr: pd.Series):
     setup_chinese_font()
+    plt.rcParams["axes.prop_cycle"] = plt.cycler(color=SERIES_COLORS)
     fig, axes = plt.subplots(3, 1, figsize=(12, 9), sharex=True)
 
     axes[0].plot(vols.index, vols["close"], lw=1)
@@ -307,7 +323,7 @@ def plot_rolling(vols: pd.DataFrame, roll_corr: pd.Series):
 
 def main():
     if is_offline():
-        print("⚠️ 离线模式：使用合成数据，数值仅用于演示代码，不代表真实市场\n")
+        print("⚠️ 离线模式：有本地缓存的数据读缓存，其余用合成数据（合成数值不代表真实市场）\n")
     three_windows()
     vols = rolling_volatility()
     window_tradeoff()

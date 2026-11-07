@@ -171,7 +171,7 @@ def lognormal_prices():
 
     theo_median = p0 * np.exp(T * mu_d)
     theo_mean = p0 * np.exp(T * mu_d + 0.5 * T * sigma_d**2)
-    print(f"🎲 模拟 {n_paths:,} 条路径：初始价 {p0:.0f}，年化漂移 {mu_a:.0%}，年化波动 {sigma_a:.0%}，{years} 年")
+    print(f"🎲 模拟 {n_paths:,} 条路径：初始价 {p0:.0f}，年化期望收益（算术）{mu_a:.0%}，年化波动 {sigma_a:.0%}，{years} 年")
     print(f"   {'':12s}{'模拟':>10s}{'理论':>10s}")
     print(f"   {'均值':12s}{final.mean():>10.1f}{theo_mean:>10.1f}")
     print(f"   {'中位数':12s}{np.median(final):>10.1f}{theo_median:>10.1f}")
@@ -179,6 +179,8 @@ def lognormal_prices():
     print(f"   最终价格低于初始价的比例 = {(final < p0).mean():.1%}")
     print("""
     💡 均值 > 中位数：少数路径涨得非常多，拉高了均值。
+       中位数只取决于 μ - σ²/2：本例中 σ²/2 = 0.4²/2 = 8%，恰好抵消了 8% 的期望收益，
+       所以虽然"期望"每年赚 8%，却有约一半路径 5 年后是亏的。
        "平均来看赚钱"不代表"大多数路径赚钱" —— 这就是 Phase 2 的波动拖累在分布上的样子。
     """)
     return final
@@ -213,11 +215,17 @@ def fit_real_returns(ret: pd.Series):
     ll_t = stats.t.logpdf(ret, df_t, loc_t, scale_t).sum()
     aic_norm, aic_t = 2 * 2 - 2 * ll_norm, 2 * 3 - 2 * ll_t
     better = "t 分布" if aic_t < aic_norm else "正态分布"
+    x5 = mu - 5 * sigma
+    p5_norm, p5_emp = stats.norm.cdf(x5, mu, sigma), (ret < x5).mean()
+    if p5_emp > 0:
+        print(f"\n🔍 跌超 5σ：经验频率是正态预测的 {p5_emp / p5_norm:,.0f} 倍")
+    else:
+        print("\n🔍 跌超 5σ：样本中没有出现过")
     print(f"\n📏 AIC（越小越好）：正态 {aic_norm:.1f}，t 分布 {aic_t:.1f} → 本数据上 {better} 拟合更好")
     if is_offline():
         print("   ⚠️ 离线合成数据是正态 GBM，没有肥尾：t 分布自由度会很大，两种分布差别不大")
     print("""
-    💡 真实数据中，正态分布给出的极端概率往往小到"几千年一遇"，经验频率却显示它们几年就出现一次。
+    💡 在真实数据上，正态分布给出的极端概率常常小到"千年一遇"，经验频率却可能高出几个数量级。
        用正态分布估计 VaR 会系统性低估极端亏损（02 课详细讨论）。
     """)
     return (mu, sigma), (df_t, loc_t, scale_t)

@@ -171,6 +171,12 @@ def execution_assumptions(df: pd.DataFrame) -> dict:
     💡 建议两种成交假设都跑：如果策略只在"收盘成交"下赚钱，在"次日开盘"下不赚钱，
        说明收益可能来自一个你实际拿不到的价格。
     """)
+
+    r_on = (open_ / close.shift(1)).fillna(1.0).prod() - 1
+    r_id = (close / open_).prod() - 1
+    print(f"    🔍 把买入持有拆成两段：隔夜段（昨收→今开）累计 {r_on:+.2%}，日内段（今开→今收）累计 {r_id:+.2%}")
+    print("       A 股不少股票的隔夜段长期偏弱（有研究认为与 T+1 等制度有关），"
+          "所以'收盘成交'还是'次日开盘成交'会显著影响择时策略的结果")
     return {"A 收盘成交": a, "C 次日开盘": c, "bh": bh}
 
 

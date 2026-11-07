@@ -19,7 +19,7 @@
 
 环境要求：
     - pip install pandas numpy matplotlib akshare
-    - 无网络时可用 QTC_OFFLINE=1 运行（使用合成数据）
+    - 无网络时可用 QTC_OFFLINE=1 运行（有本地缓存读缓存，否则用合成数据）
 """
 
 import sys
@@ -37,6 +37,7 @@ from utils.plotting import save_figure, setup_chinese_font
 
 load_dotenv()
 
+SERIES_COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300"]  # 多序列按固定顺序取色
 START, END = "20180101", "20241231"
 SYMBOL, NAME = "600519", "贵州茅台"
 
@@ -261,7 +262,7 @@ def pitfalls(data: pd.DataFrame):
     long_df["ret_wrong"] = long_df["close"].pct_change()
     long_df["ret_right"] = long_df.groupby("code")["close"].pct_change()
     print(long_df.to_string(index=False, float_format=lambda x: f"{x:+.4f}" if abs(x) < 10 else f"{x:.1f}"))
-    print("   第 4 行的 ret_wrong 把 601088 的第一天和 600519 的最后一天相除，得到 -98%！")
+    print(f"   第 4 行的 ret_wrong 把 601088 的第一天和 600519 的最后一天相除，得到 {long_df['ret_wrong'].iloc[3]:+.2%}！")
 
     # 陷阱 3：对数收益的下界
     print("\n❌ 陷阱 3：亏光时对数收益为 -∞")
@@ -285,6 +286,7 @@ def plot_returns(data: pd.DataFrame):
     print("=" * 60)
 
     setup_chinese_font()
+    plt.rcParams["axes.prop_cycle"] = plt.cycler(color=SERIES_COLORS)
     fig, axes = plt.subplots(1, 2, figsize=(13, 4.5))
 
     ret, log_ret = data["ret"].dropna(), data["log_ret"].dropna()
@@ -312,7 +314,7 @@ def plot_returns(data: pd.DataFrame):
 
 def main():
     if is_offline():
-        print("⚠️ 离线模式：使用合成数据，数值仅用于演示代码，不代表真实市场\n")
+        print("⚠️ 离线模式：有本地缓存的数据读缓存，其余用合成数据（合成数值不代表真实市场）\n")
     intuition()
     data = real_data_returns()
     additivity_demo()

@@ -19,7 +19,7 @@
 
 环境要求：
     - pip install pandas numpy matplotlib akshare
-    - 无网络时可用 QTC_OFFLINE=1 运行（使用合成数据）
+    - 无网络时可用 QTC_OFFLINE=1 运行（有本地缓存读缓存，否则用合成数据）
 """
 
 import sys
@@ -37,6 +37,7 @@ from utils.plotting import save_figure, setup_chinese_font
 
 load_dotenv()
 
+SERIES_COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300"]  # 多序列按固定顺序取色
 TRADING_DAYS = 252  # 全项目统一的每年交易日数（也可以改成 244），不要到处写魔法数字
 START, END = "20180101", "20241231"
 
@@ -85,8 +86,8 @@ def periods_per_year():
     counts = idx.groupby(idx.index.year).size()
     print("📅 数据中每年的交易日数（沪深 300）：")
     print("   " + "  ".join(f"{y}:{n}" for y, n in counts.items()))
-    if is_offline():
-        print("   （离线合成数据用工作日近似交易日，不含节假日，所以每年约 260 天）")
+    if counts.median() > 250:
+        print("   （每年超过 250 天：这是合成数据，用工作日近似交易日，不含节假日）")
     print(f"\n💡 本课程统一使用 TRADING_DAYS = {TRADING_DAYS}；关键不在于选哪个数，而在于全项目统一")
 
 
@@ -281,6 +282,7 @@ def annualization_pitfalls(daily: pd.Series):
 
 def plot_sqrt_rule():
     setup_chinese_font()
+    plt.rcParams["axes.prop_cycle"] = plt.cycler(color=SERIES_COLORS)
     close = get_stock_daily_adj("600519", START, END)["adj_close"]
     log_ret = np.log(close).diff().dropna()
     horizons = [1, 2, 5, 10, 20, 40, 60, 120]
@@ -305,7 +307,7 @@ def plot_sqrt_rule():
 
 def main():
     if is_offline():
-        print("⚠️ 离线模式：使用合成数据，数值仅用于演示代码，不代表真实市场\n")
+        print("⚠️ 离线模式：有本地缓存的数据读缓存，其余用合成数据（合成数值不代表真实市场）\n")
     periods_per_year()
     cagr_vs_arithmetic()
     sqrt_t_rule()

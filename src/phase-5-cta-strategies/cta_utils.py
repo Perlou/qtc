@@ -322,9 +322,15 @@ def build_continuous(contracts: pd.DataFrame, start: str | None = None, end: str
     return out[cols_order]
 
 
+_MEMO: dict[tuple, pd.DataFrame] = {}
+
+
 def get_continuous(symbol: str, start: str = FUT_START, end: str = FUT_END) -> pd.DataFrame:
     """一站式：下载 / 读取单合约 → 选主力 → 比例 & 价差调整连续合约（见 build_continuous）"""
-    return build_continuous(get_contracts(symbol, start, end), start, end)
+    key = (symbol, start, end, is_offline())
+    if key not in _MEMO:  # 进程内缓存：同一课程里多次调用不重复构造
+        _MEMO[key] = build_continuous(get_contracts(symbol, start, end), start, end)
+    return _MEMO[key].copy()
 
 
 def load_universe(symbols: list[str] | None = None, start: str = FUT_START, end: str = FUT_END) -> dict:
