@@ -20,7 +20,7 @@ ATR 仓位与波动率目标
 
 环境要求：
     - pip install akshare pandas numpy matplotlib
-    - 无网络时可用 QTC_OFFLINE=1 运行（使用合成数据）
+    - 无网络时可用 QTC_OFFLINE=1 运行（有本地缓存时读缓存，否则使用合成数据）
 """
 
 import sys

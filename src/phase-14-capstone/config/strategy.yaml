@@ -1,0 +1,32 @@
+# mini-quant 策略配置（由 mini_quant.config.load_config 读取）
+# 做实验时改这里，而不是改代码；每次运行的配置会写入 manifest，附在研究报告附录。
+
+name: mq_multifactor
+
+# 因子层：启用的因子（名字必须已在因子注册表中注册）
+factors: [ep, bp, roe, mom_12_1, rev_1m, lowvol, lowturn, size]
+neutralize: true          # 行业 + 市值中性化
+
+# 模型层
+model: ridge              # equal / icw / ridge / hgb
+train_window: 36          # 滚动训练窗口（月）
+min_train: 10             # 至少 10 期标签才开始训练
+retrain_every: 1          # 每月重新训练
+
+# 组合层
+n_top: 20
+weighting: equal          # equal / inverse_vol
+max_weight: 0.10          # 单票硬上限
+max_turnover: 0.5         # 每次调仓单边换手上限
+
+# 执行与成本
+capital: 1000000
+min_order_value: 3000
+slippage: 0.001
+
+# 样本划分：参数只在样本内选择，样本外只评估一次
+is_start: "2020-01-01"
+is_end: "2022-12-31"
+oos_start: "2023-01-01"
+oos_end: "2024-12-31"
+seed: 42

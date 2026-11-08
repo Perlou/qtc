@@ -105,6 +105,23 @@ def _cache_path(kind: str, symbol: str, start: str, end: str, adjust: str = "") 
     return CACHE_DIR / f"{kind}_{symbol}_{tag}_{start}_{end}.parquet"
 
 
+def _finalize(df: pd.DataFrame, synthetic: bool) -> pd.DataFrame:
+    """统一日期索引精度为 ns（pandas 3 下不同来源可能是 ms/us，merge_asof 要求一致），并标记数据来源"""
+    if isinstance(df.index, pd.DatetimeIndex):
+        df.index = df.index.astype("datetime64[ns]")
+    df.attrs["synthetic"] = synthetic
+    return df
+
+
+def is_synthetic(df: pd.DataFrame) -> bool:
+    """数据是否为合成数据（由本模块的回退逻辑生成）。
+
+    注意：QTC_OFFLINE=1 时会优先读取本地缓存的真实数据，只有缓存缺失才使用合成数据，
+    因此"是否离线"不等于"是否合成"，需要用本函数判断。
+    """
+    return bool(df.attrs.get("synthetic", False))
+
+
 def _load_with_fallback(
     cache_path: Path,
     fetchers: list[Callable[[], pd.DataFrame]],
@@ -112,9 +129,9 @@ def _load_with_fallback(
     label: str,
     use_cache: bool = True,
 ) -> pd.DataFrame:
-    """读缓存 → 依次尝试各数据源 → 全部失败则使用合成数据"""
+    """读缓存 → 依次尝试各数据源 → 全部失败则使用合成数据（合成数据不写入缓存）"""
     if use_cache and cache_path.exists():
-        return pd.read_parquet(cache_path)
+        return _finalize(pd.read_parquet(cache_path), synthetic=False)
 
     if not is_offline():
         errors = []
@@ -125,7 +142,7 @@ def _load_with_fallback(
                     if use_cache:
                         cache_path.parent.mkdir(parents=True, exist_ok=True)
                         df.to_parquet(cache_path)
-                    return df
+                    return _finalize(df, synthetic=False)
                 errors.append(f"{fetch.__name__}: 返回空数据")
             except Exception as e:  # 数据源异常种类繁多，统一回退
                 errors.append(f"{fetch.__name__}: {type(e).__name__}: {e}")
@@ -133,9 +150,9 @@ def _load_with_fallback(
         for err in errors:
             print(f"    - {err[:150]}")
     else:
-        print(f"⚠️ 离线模式（QTC_OFFLINE=1）：{label} 使用合成数据")
+        print(f"⚠️ 离线模式（QTC_OFFLINE=1）且无本地缓存：{label} 使用合成数据")
 
-    return synth()
+    return _finalize(synth(), synthetic=True)
 
 
 def _normalize_em(df: pd.DataFrame) -> pd.DataFrame:
@@ -319,9 +336,74 @@ def get_stock_daily_adj(
     交易撮合（涨跌停、整数手、成交金额）使用不复权的 open/high/low/close。
     """
     df = get_stock_daily(symbol, start, end, adjust="")
-    factor = get_adj_factor(symbol)
-    df["adj_factor"] = factor.reindex(factor.index.union(df.index)).ffill().reindex(df.index).fillna(1.0)
+    if is_synthetic(df):
+        # 合成价格不能配真实复权因子，否则除权日会出现虚假跳变
+        df["adj_factor"] = 1.0
+    else:
+        factor = get_adj_factor(symbol)
+        df["adj_factor"] = factor.reindex(factor.index.union(df.index)).ffill().reindex(df.index).fillna(1.0)
     df["adj_close"] = df["close"] * df["adj_factor"]
+    return df
+
+
+def _etf_corrected_returns(raw: pd.Series, hfq: pd.Series, tol: float = 0.002) -> tuple[pd.Series, pd.DataFrame]:
+    """
+    用不复权价 + 东方财富后复权价，还原分红、拆分修正后的真实日收益
+
+    东方财富对不同 ETF 的复权口径不统一（有的加减法、有的等比），且不复权价含拆分跳变。
+    事件日判定：差值 A = hfq - raw 与比值 M = hfq / raw 当天同时跳变。
+        - 事件后 A 保持不变 → 加减法复权，按"现金分红"计算：r = P_t / (P_{t-1} - D) - 1
+        - 否则 → 等比复权，直接用 hfq 收益（拆分、折算、等比分红）
+    """
+    raw = raw.astype(float)
+    hfq = hfq.reindex(raw.index).astype(float)
+    r = raw.pct_change()
+    r_hfq = hfq.pct_change()
+    dA = (hfq - raw).diff()
+    dM = (hfq / raw).pct_change()
+    is_event = ((dA.abs() > tol) & (dM.abs() > tol)).fillna(False).to_numpy()
+
+    rows = []
+    for i in np.flatnonzero(is_event):
+        after = dA.iloc[i + 1 : i + 6]
+        additive = len(after) > 0 and bool((after.abs() < 1e-4).all())
+        prev = raw.iloc[i - 1]
+        if additive and 0 < dA.iloc[i] < 0.2 * prev:
+            kind, cash = "现金分红", dA.iloc[i]
+            fixed = raw.iloc[i] / (prev - cash) - 1
+        else:
+            ratio = prev / raw.iloc[i] * (1 + r_hfq.iloc[i])
+            kind = "拆分/折算" if abs(ratio - 1) > 0.05 else "分红（等比）"
+            cash, fixed = np.nan, r_hfq.iloc[i]
+        rows.append({"date": raw.index[i], "type": kind, "cash_per_share": cash,
+                     "raw_return": r.iloc[i], "fixed_return": fixed})
+        r.iloc[i] = fixed
+    return r, pd.DataFrame(rows, columns=["date", "type", "cash_per_share", "raw_return", "fixed_return"])
+
+
+def get_etf_daily_adj(
+    symbol: str = "510300",
+    start: str = "20230101",
+    end: str = "20231231",
+) -> pd.DataFrame:
+    """
+    ETF 不复权日线 + 修正分红/拆分后的收益（推荐用于计算 ETF 收益）
+
+    额外列：
+        ret:       修正后的日收益（拆分日不再出现 -80% 之类的假跌幅）
+        adj_close: 由修正收益累乘得到的复权价（起点等于首日不复权收盘价）
+    df.attrs["events"] 为识别出的分红/拆分事件表。
+    交易撮合使用不复权的 open/high/low/close。
+    """
+    df = get_etf_daily(symbol, start, end, adjust="")
+    if is_synthetic(df):
+        df["ret"] = df["close"].pct_change()
+        events = pd.DataFrame(columns=["date", "type", "cash_per_share", "raw_return", "fixed_return"])
+    else:
+        hfq = get_etf_daily(symbol, start, end, adjust="hfq")["close"]
+        df["ret"], events = _etf_corrected_returns(df["close"], hfq)
+    df["adj_close"] = df["close"].iloc[0] * (1 + df["ret"].fillna(0)).cumprod()
+    df.attrs["events"] = events
     return df
 
 

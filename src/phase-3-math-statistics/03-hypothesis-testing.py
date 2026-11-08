@@ -41,6 +41,13 @@ from utils.plotting import save_figure, setup_chinese_font
 
 load_dotenv()
 
+
+def is_synthetic(index) -> bool:
+    """utils 的合成数据用工作日近似交易日：出现元旦、国庆前三天这类 A 股休市日，说明拿到的是合成数据。
+    （QTC_OFFLINE=1 时若本地已有缓存，utils 仍会读取真实缓存，所以不能只看环境变量）"""
+    idx = pd.DatetimeIndex(index)
+    return bool((((idx.month == 1) & (idx.day == 1)) | ((idx.month == 10) & (idx.day <= 3))).any())
+
 TRADING_DAYS = 252
 START, END = "20100101", "20251231"
 
@@ -106,7 +113,7 @@ def plot_null(t_null: np.ndarray, observed_t: float):
     ax.plot(x, stats.norm.pdf(x), color="k", lw=1, label="N(0,1)")
     ax.axvline(observed_t, color="C3", ls="--")
     ax.set_title("p 值 = 原假设成立时，出现至少这么极端结果的概率")
-    ax.legend()
+    ax.legend(loc="upper left", fontsize=8)
     path = save_figure(fig, "03_p_value.png", subdir="phase-3")
     print(f"🖼️  图已保存：{path}")
 
@@ -185,6 +192,8 @@ def test_real_strategy():
        - Newey-West t 考虑了收益的自相关和异方差；两者差异大时，要以稳健的结果为准
        - 判断时请看实际的 p 值；即使 p < 0.05，还要问：这个均线窗口是我试了多少次才选出来的？
     """)
+    if is_synthetic(close.index):
+        print("    ⚠️ 离线合成数据（GBM）：以上数字只用于跑通流程，不代表真实市场")
 
 
 # ==================== 第四部分：t = SR × √年数 ====================
@@ -265,7 +274,7 @@ def multiple_testing():
     t_arr = np.array([x[0] for x in results])
     p_arr = np.array([x[1] for x in results])
 
-    print(f"🎲 在真实沪深 300 上测试 {n_strats} 个'抛硬币'策略（信号与行情毫无关系）：")
+    print(f"🎲 在沪深 300 数据上测试 {n_strats} 个'抛硬币'策略（信号与行情毫无关系）：")
     print(f"   单侧 p < 0.05 的策略数：{(p_arr < 0.05).sum()} 个（运气期望约 {n_strats * 0.05:.0f} 个）")
     print(f"   最好的那个：t = {t_arr.max():.2f}，p = {p_arr.min():.4f}")
     print(f"   Bonferroni 修正后的门槛 p < 0.05/{n_strats} = {0.05 / n_strats:.4f}，"

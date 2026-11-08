@@ -301,7 +301,7 @@ def plot_relative(rets: pd.DataFrame, nav1: pd.Series, nav2: pd.Series, rb: pd.D
     beta = d["600519"].cov(d[BENCH]) / d[BENCH].var()
     alpha = d["600519"].mean() - beta * d[BENCH].mean()
     xs = np.array([d[BENCH].min(), d[BENCH].max()])
-    axes[1, 0].plot(xs, alpha + beta * xs, "r-", lw=1.5, label=f"β = {beta:.2f}")
+    axes[1, 0].plot(xs, alpha + beta * xs, color=SERIES_COLORS[1], lw=2, label=f"β = {beta:.2f}")
     axes[1, 0].set_xlabel("沪深300 日收益")
     axes[1, 0].set_ylabel("贵州茅台 日收益")
     axes[1, 0].set_title("CAPM 回归散点图")

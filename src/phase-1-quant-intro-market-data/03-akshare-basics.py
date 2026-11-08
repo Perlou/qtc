@@ -91,7 +91,7 @@ def stock_list():
     def board_of(code: str) -> str:
         if code.startswith(("688", "689")):
             return "科创板"
-        if code.startswith(("300", "301")):
+        if code.startswith("30"):
             return "创业板"
         if code.startswith(("8", "4", "92")):
             return "北交所"

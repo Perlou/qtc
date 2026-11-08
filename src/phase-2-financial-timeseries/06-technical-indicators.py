@@ -366,6 +366,7 @@ def plot_indicators(df: pd.DataFrame):
 
     axes[3].plot(sl, a.loc[sl], lw=1, color="tab:brown")
     axes[3].set_ylabel("ATR14 / close")
+    axes[3].yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.1%}"))
 
     path = save_figure(fig, "06_technical_indicators.png", subdir="phase-2")
     print(f"\n🖼️ 图片已保存：{path}")

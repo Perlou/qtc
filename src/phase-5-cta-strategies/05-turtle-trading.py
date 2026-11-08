@@ -21,7 +21,7 @@
 
 环境要求：
     - pip install akshare pandas numpy matplotlib
-    - 无网络时可用 QTC_OFFLINE=1 运行（使用合成数据）
+    - 无网络时可用 QTC_OFFLINE=1 运行（有本地缓存时读缓存，否则使用合成数据）
 """
 
 import sys
@@ -34,7 +34,7 @@ import numpy as np
 import pandas as pd
 from dotenv import load_dotenv
 
-from cta_utils import SPECS, UNIVERSE, cost_rate, get_continuous, perf_stats, stats_table, true_range, wilder_atr
+from cta_utils import SPECS, UNIVERSE, cost_rate, get_continuous, perf_stats, stats_table, wilder_atr
 from utils.plotting import save_figure, setup_chinese_font
 
 load_dotenv()

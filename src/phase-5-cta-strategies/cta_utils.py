@@ -12,8 +12,8 @@ Phase 5 辅助模块：期货数据 + 回测绩效工具
    - get_continuous(symbol)     上面三步的一站式入口（推荐）
    所有下载结果缓存到 data/cache/futures_*.parquet，第二次运行不再请求网络。
 
-2. 离线回退
-   QTC_OFFLINE=1 或网络失败时，用 utils.data.synthetic_ohlcv 生成"现货"路径，
+2. 离线回退（与 utils.data 口径一致）
+   先读本地缓存；缓存不存在且 QTC_OFFLINE=1，或网络失败时，用 utils.data.synthetic_ohlcv 生成"现货"路径，
    再按到期日、升贴水和持仓量曲线派生出一组合成合约，整条处理流程保持不变。
    合成数据只用于跑通代码，不能得出任何关于真实市场的结论。
 
@@ -29,7 +29,6 @@ Phase 5 辅助模块：期货数据 + 回测绩效工具
 
 from __future__ import annotations
 
-import os
 import sys
 import zlib
 from pathlib import Path
@@ -154,11 +153,11 @@ def get_contracts(symbol: str, start: str = FUT_START, end: str = FUT_END, verbo
     缓存：data/cache/futures_contracts_{symbol}_{start}_{end}.parquet
     """
     path = CACHE_DIR / f"futures_contracts_{symbol}_{start}_{end}.parquet"
-    if is_offline():
-        _warn_synthetic(f"期货 {symbol}", "离线模式 QTC_OFFLINE=1")
-        return _synthetic_contracts(symbol, start, end)
-    if path.exists():
+    if path.exists():  # 与 utils.data 一致：在线、离线都先读本地缓存
         return pd.read_parquet(path)
+    if is_offline():
+        _warn_synthetic(f"期货 {symbol}", "离线模式 QTC_OFFLINE=1 且无本地缓存")
+        return _synthetic_contracts(symbol, start, end)
 
     try:
         import akshare as ak
@@ -202,9 +201,9 @@ def get_main_sina(symbol: str, start: str = FUT_START, end: str = FUT_END) -> pd
     缓存：data/cache/futures_main_{symbol}_{start}_{end}.parquet
     """
     path = CACHE_DIR / f"futures_main_{symbol}_{start}_{end}.parquet"
+    if path.exists():  # 与 utils.data 一致：在线、离线都先读本地缓存
+        return pd.read_parquet(path)
     if not is_offline():
-        if path.exists():
-            return pd.read_parquet(path)
         try:
             import akshare as ak
 
@@ -219,8 +218,8 @@ def get_main_sina(symbol: str, start: str = FUT_START, end: str = FUT_END) -> pd
         except Exception as e:
             _warn_synthetic(f"期货主力连续 {symbol}0", f"下载失败 {type(e).__name__}")
     else:
-        _warn_synthetic(f"期货主力连续 {symbol}0", "离线模式 QTC_OFFLINE=1")
-    # 离线：用合成合约的"未调整拼接"模拟数据源的主力连续
+        _warn_synthetic(f"期货主力连续 {symbol}0", "离线模式 QTC_OFFLINE=1 且无本地缓存")
+    # 无缓存且离线 / 下载失败：用合成合约的"未调整拼接"模拟数据源的主力连续
     cont = build_continuous(_synthetic_contracts(symbol, start, end))
     out = cont[["raw_open", "raw_high", "raw_low", "raw_close", "volume", "oi"]].copy()
     out.columns = ["open", "high", "low", "close", "volume", "oi"]
@@ -231,7 +230,7 @@ def get_main_sina(symbol: str, start: str = FUT_START, end: str = FUT_END) -> pd
 # ==================== 主力选择与连续合约构造 ====================
 
 
-def _wide(contracts: pd.DataFrame, field: str) -> pd.DataFrame:
+def wide_panel(contracts: pd.DataFrame, field: str) -> pd.DataFrame:
     """长表 → 宽表（行 = 日期，列 = 合约，按到期先后排序）"""
     w = contracts.pivot_table(index="date", columns="contract", values=field, aggfunc="last")
     order = sorted(w.columns, key=lambda c: int("".join(ch for ch in c if ch.isdigit())))
@@ -264,7 +263,7 @@ def build_continuous(contracts: pd.DataFrame, start: str | None = None, end: str
         volume, oi          主力合约成交量、持仓量
         roll                当天是否发生换月（持有合约与前一天不同）
     """
-    fields = {f: _wide(contracts, f) for f in ["open", "high", "low", "close", "volume", "hold"]}
+    fields = {f: wide_panel(contracts, f) for f in ["open", "high", "low", "close", "volume", "hold"]}
     close_w = fields["close"]
     main = select_main(fields["hold"], close_w)
 
@@ -439,7 +438,8 @@ def trade_stats(pos: pd.Series, ret: pd.Series) -> dict:
     df = pd.DataFrame({"sign": sign, "r": (pos * ret).fillna(0), "id": trade_id})
     df = df[df["sign"] != 0]
     if df.empty:
-        return {"笔数": 0, "胜率": np.nan, "盈亏比": np.nan, "单笔偏度": np.nan, "平均持有天数": np.nan}
+        return {"笔数": 0, "胜率": np.nan, "盈亏比": np.nan, "单笔偏度": np.nan, "平均持有天数": np.nan,
+                "_trades": pd.Series(dtype=float)}
     g = df.groupby("id")
     tr = g["r"].apply(lambda x: (1 + x).prod() - 1)
     entry = pd.Series(df.index, index=df.index).groupby(df["id"]).first()
@@ -456,12 +456,7 @@ def trade_stats(pos: pd.Series, ret: pd.Series) -> dict:
     }
 
 
-def offline_note() -> str:
-    return "（当前为合成数据，数字只用于跑通流程）" if is_offline() else ""
-
-
 if __name__ == "__main__":  # 预热缓存：python cta_utils.py
-    os.environ.setdefault("PYTHONWARNINGS", "ignore")
     for s in UNIVERSE:
         df = get_continuous(s)
         print(s, len(df), df.index[0].date(), df.index[-1].date(), "换月次数", int(df["roll"].sum()))

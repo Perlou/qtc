@@ -58,7 +58,7 @@ def board_rule(symbol: str, is_st: bool = False, date=None) -> BoardRule:
     """
     if symbol.startswith(("688", "689")):
         return BoardRule("科创板", 0.20, 200, 1)
-    if symbol.startswith(("300", "301")):
+    if symbol.startswith("30"):  # 300/301/302（302 为更名换码后的创业板代码段）
         return BoardRule("创业板", 0.20, 100, 100)
     if symbol.startswith(("8", "4", "92")):
         return BoardRule("北交所", 0.30, 100, 1)

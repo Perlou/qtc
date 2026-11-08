@@ -35,10 +35,17 @@ import statsmodels.api as sm
 from dotenv import load_dotenv
 from statsmodels.tsa.stattools import adfuller, coint
 
-from utils.data import get_close_panel, get_index_daily, is_offline
+from utils.data import get_close_panel, get_index_daily
 from utils.plotting import save_figure, setup_chinese_font
 
 load_dotenv()
+
+
+def is_synthetic(index) -> bool:
+    """utils 的合成数据用工作日近似交易日：出现元旦、国庆前三天这类 A 股休市日，说明拿到的是合成数据。
+    （QTC_OFFLINE=1 时若本地已有缓存，utils 仍会读取真实缓存，所以不能只看环境变量）"""
+    idx = pd.DatetimeIndex(index)
+    return bool((((idx.month == 1) & (idx.day == 1)) | ((idx.month == 10) & (idx.day <= 3))).any())
 
 START, END = "20180101", "20241231"
 NAMES = {
@@ -101,7 +108,7 @@ def correlation_basics(panel: pd.DataFrame):
     💡 真实市场中，危机/高波动期相关性往往上升 —— 平时分散化良好的组合可能同时下跌。
        用全样本相关系数评估分散化效果会过于乐观。
     """)
-    if is_offline():
+    if is_synthetic(panel.index):
         print("    ⚠️ 离线合成数据中各股票彼此独立，相关系数都接近 0，看不到上述现象")
     return roll
 
@@ -196,6 +203,8 @@ def test_real_pairs(panel: pd.DataFrame) -> tuple[str, str]:
        - 注意 coint 对"谁做 Y、谁做 X"并不完全对称，交换顺序结果可能不同
        - ⚠️ 从 {len(pairs)} 对里挑 p 值最小的一对，本身就是多重检验（见第五部分），需要样本外验证
     """)
+    if is_synthetic(panel.index):
+        print("    ⚠️ 离线合成数据中股票彼此独立、绝不协整：上表中任何 p < 0.05 都是假阳性")
     i = int(table["coint p 值"].astype(float).argmin())
     return pairs[i]
 

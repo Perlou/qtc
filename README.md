@@ -71,6 +71,27 @@ QTC_OFFLINE=1 python src/phase-1-quant-intro-market-data/xx.py
 
 </details>
 
+<details>
+<summary><b>❌ lightgbm / xgboost 导入报错（Library not loaded: libomp.dylib）</b></summary>
+
+macOS 上这两个库依赖 OpenMP 运行库：
+
+```bash
+brew install libomp
+```
+
+不安装也能学：Phase 9 会自动改用 scikit-learn 的 `HistGradientBoosting`（原理相同）。
+
+</details>
+
+<details>
+<summary><b>❓ 离线模式（QTC_OFFLINE=1）用的是真实数据还是合成数据？</b></summary>
+
+先读 `data/cache/` 中的本地缓存（真实数据），只有缓存缺失时才生成合成数据，并打印 `⚠️ 使用合成数据`。
+合成数据只用于跑通代码，不能据此得出任何关于真实市场的结论。代码中可用 `utils.data.is_synthetic(df)` 判断。
+
+</details>
+
 ---
 
 ## 📂 项目结构
@@ -83,11 +104,15 @@ qtc/
 ├── CONCEPTS.md                  # 核心概念速查
 ├── requirements.txt             # Python 依赖
 ├── .env.example                 # 环境变量模板
-├── src/                         # 课程代码（按阶段组织）
-│   ├── utils/                   # 公共工具：数据获取（缓存 + 离线回退）、绘图
+├── src/                         # 课程代码（按阶段组织，共 14 阶段 138 课）
+│   ├── utils/                   # 公共工具：数据获取（缓存 + 离线回退 + 复权）、绘图
 │   ├── phase-1-quant-intro-market-data/
+│   │   ├── README.md            # 本阶段课程清单与学习检查
+│   │   ├── CONCEPT.md           # 本阶段核心概念详解（建议先读）
+│   │   ├── 01-xxx.py ...        # 课程文件，每个都可直接运行
+│   │   └── ex/                  # 你的练习代码
 │   ├── phase-2-financial-timeseries/
-│   └── ...
+│   └── ...                      # 部分阶段带共享模块，如 bt_core.py、factor_data.py、mini_trader/
 ├── projects/                    # 每阶段配套实战项目
 ├── notebooks/                   # Jupyter 研究笔记
 ├── docs/                        # 学习笔记

@@ -1,18 +1,20 @@
 # 量化交易课程依赖
 # 推荐 Python 3.11 / 3.12（部分量化库尚未适配更新版本）
+# 国内网络安装慢时可加镜像：pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 
-# ==================== 核心（Phase 1 起必需）====================
+# ==================== 核心（Phase 1 起）====================
 numpy>=1.26
 pandas>=2.1
 scipy>=1.11
 matplotlib>=3.8
 mplfinance>=0.12.10b0
+plotly>=5.20
 python-dotenv>=1.0
 
 # 数据源
-akshare>=1.14          # A 股 / 期货 / 指数免费数据
+akshare>=1.14          # A 股 / 期货 / 期权 / 指数免费数据
 tushare>=1.4           # Tushare Pro（需 token，可选）
-ccxt>=4.3              # 加密货币交易所统一接口
+ccxt>=4.3              # 加密货币交易所统一接口（仅公开行情）
 
 # 存储
 pyarrow>=15.0          # Parquet
@@ -21,34 +23,32 @@ duckdb>=1.0            # 本地分析型数据库
 # 测试
 pytest>=8.0
 
-# ==================== 后续阶段（学到时再安装）====================
-# Phase 2-3：时间序列与统计
-# statsmodels>=0.14
-# arch>=7.0              # GARCH
-# pandas-ta>=0.3.14b
-# plotly>=5.20
+# ==================== Phase 3：统计与时间序列 ====================
+statsmodels>=0.14
+arch>=7.0              # GARCH
 
-# Phase 4-6：回测与策略
-# backtrader>=1.9.78
-# vectorbt>=0.26
+# ==================== Phase 4：回测框架 ====================
+backtrader>=1.9.78
+vectorbt>=0.26
 
-# Phase 7-8：多因子与组合优化
-# alphalens-reloaded>=0.4
-# cvxpy>=1.5
-# riskfolio-lib>=6.0
-# scikit-learn>=1.4
+# ==================== Phase 7-8：多因子与组合优化 ====================
+scikit-learn>=1.4
+alphalens-reloaded>=0.4
+cvxpy>=1.5
+riskfolio-lib>=6.0
 
-# Phase 9-10：机器学习与 AI 量化
-# lightgbm>=4.3
-# xgboost>=2.0
-# shap>=0.45
-# torch>=2.2
-# pyqlib>=0.9
-# stable-baselines3>=2.3
+# ==================== Phase 9-10：机器学习与 AI 量化 ====================
+shap>=0.45
+torch>=2.2
+pyqlib>=0.9            # 课程不下载官方数据，只用本地迷你数据演示
+gymnasium>=1.0
+stable-baselines3>=2.3
+openai>=1.50           # 可选：配置 OPENAI_API_KEY 后启用 LLM，否则自动降级
+# LightGBM / XGBoost（可选）：macOS 需先 brew install libomp；
+# 未安装或无法加载时，Phase 9 自动改用 scikit-learn 的 HistGradientBoosting
+lightgbm>=4.3
+xgboost>=2.0
 
-# Phase 11-13：微观结构、期权与实盘
-# py_vollib>=1.0
+# ==================== Phase 13：实盘接口（可选，课程不安装）====================
 # vnpy>=3.9
-# vnpy_ctp>=6.7
-# fastapi>=0.110
-# uvicorn>=0.29
+# vnpy_ctp>=6.7        # 需 CTP 账户 / SimNow 仿真账号

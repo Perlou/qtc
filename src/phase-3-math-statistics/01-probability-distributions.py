@@ -34,10 +34,17 @@ import pandas as pd
 from dotenv import load_dotenv
 from scipy import stats
 
-from utils.data import get_stock_daily_adj, is_offline
+from utils.data import get_stock_daily_adj
 from utils.plotting import save_figure, setup_chinese_font
 
 load_dotenv()
+
+
+def is_synthetic(index) -> bool:
+    """utils 的合成数据用工作日近似交易日：出现元旦、国庆前三天这类 A 股休市日，说明拿到的是合成数据。
+    （QTC_OFFLINE=1 时若本地已有缓存，utils 仍会读取真实缓存，所以不能只看环境变量）"""
+    idx = pd.DatetimeIndex(index)
+    return bool((((idx.month == 1) & (idx.day == 1)) | ((idx.month == 10) & (idx.day <= 3))).any())
 
 TRADING_DAYS = 252
 SYMBOL, NAME = "600519", "贵州茅台"
@@ -92,6 +99,7 @@ def distribution_zoo():
     print("""
     💡 观察：t 分布已经标准化为方差 1，和正态"一样宽"，但超出 ±4σ 的比例明显更高 —— 这就是肥尾。
        对数正态的偏度为正：右边有一条长尾巴。
+       t(3) 的理论峰度是无穷大，所以样本峰度会非常大且很不稳定 —— 换个随机种子就会差很多。
     """)
 
     # 离散分布：二项与泊松
@@ -134,7 +142,7 @@ def normal_rule(ret: pd.Series):
             f"{np.mean(np.abs(sim - sim.mean()) <= k * sim.std()):.4%}",
             f"{np.mean(np.abs(ret - mu) <= k * sd):.4%}",
         ])
-    print(pd.DataFrame(rows, columns=["区间", "正态理论", "正态模拟", f"{NAME}真实"]).to_string(index=False))
+    print(pd.DataFrame(rows, columns=["区间", "正态理论", "正态模拟", f"{NAME}样本"]).to_string(index=False))
 
     beyond3 = int((np.abs(ret - mu) > 3 * sd).sum())
     expected3 = len(ret) * (1 - (stats.norm.cdf(3) - stats.norm.cdf(-3)))
@@ -222,7 +230,7 @@ def fit_real_returns(ret: pd.Series):
     else:
         print("\n🔍 跌超 5σ：样本中没有出现过")
     print(f"\n📏 AIC（越小越好）：正态 {aic_norm:.1f}，t 分布 {aic_t:.1f} → 本数据上 {better} 拟合更好")
-    if is_offline():
+    if is_synthetic(ret.index):
         print("   ⚠️ 离线合成数据是正态 GBM，没有肥尾：t 分布自由度会很大，两种分布差别不大")
     print("""
     💡 在真实数据上，正态分布给出的极端概率常常小到"千年一遇"，经验频率却可能高出几个数量级。

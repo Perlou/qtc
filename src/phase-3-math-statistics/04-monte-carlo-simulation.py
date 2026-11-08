@@ -35,10 +35,17 @@ from arch.bootstrap import StationaryBootstrap
 from dotenv import load_dotenv
 from scipy import stats
 
-from utils.data import get_index_daily, get_stock_daily_adj, is_offline
+from utils.data import get_index_daily, get_stock_daily_adj
 from utils.plotting import save_figure, setup_chinese_font
 
 load_dotenv()
+
+
+def is_synthetic(index) -> bool:
+    """utils 的合成数据用工作日近似交易日：出现元旦、国庆前三天这类 A 股休市日，说明拿到的是合成数据。
+    （QTC_OFFLINE=1 时若本地已有缓存，utils 仍会读取真实缓存，所以不能只看环境变量）"""
+    idx = pd.DatetimeIndex(index)
+    return bool((((idx.month == 1) & (idx.day == 1)) | ((idx.month == 10) & (idx.day <= 3))).any())
 
 TRADING_DAYS = 252
 START, END = "20150101", "20241231"
@@ -230,7 +237,8 @@ def block_bootstrap_demo(strat: pd.Series):
        块(长度3): [d4 d5 d6][d1 d2 d3][d7 d8 d9]   ← 块内保留连续性
     """)
 
-    hs300 = get_index_daily("000300", START, END)["close"].pct_change().dropna().to_numpy()
+    hs300_s = get_index_daily("000300", START, END)["close"].pct_change().dropna()
+    hs300 = hs300_s.to_numpy()
     series = {
         "沪深300 买入持有": hs300,
         "60 日均线择时": strat.to_numpy(),
@@ -260,7 +268,7 @@ def block_bootstrap_demo(strat: pd.Series):
        - 一年期 MDD 的尾部（5% 最坏）是资金规划该参考的数字；回测里的历史 MDD 只是分布中的一个点
        - 块长度是需要选择的参数：太短保留不了结构，太长则路径之间差异太小
     """)
-    if is_offline():
+    if is_synthetic(hs300_s.index):
         print("    ⚠️ 离线合成数据（GBM）没有波动聚集，两种 Bootstrap 的差别主要看'GARCH 模拟'这一行")
 
     # arch 库提供更完善的实现：StationaryBootstrap（块长度随机，平均为 block）

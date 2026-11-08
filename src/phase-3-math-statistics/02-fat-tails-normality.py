@@ -35,10 +35,17 @@ from dotenv import load_dotenv
 from scipy import stats
 from statsmodels.stats.diagnostic import lilliefors
 
-from utils.data import get_index_daily, get_stock_daily_adj, is_offline
+from utils.data import get_index_daily, get_stock_daily_adj
 from utils.plotting import save_figure, setup_chinese_font
 
 load_dotenv()
+
+
+def is_synthetic(index) -> bool:
+    """utils 的合成数据用工作日近似交易日：出现元旦、国庆前三天这类 A 股休市日，说明拿到的是合成数据。
+    （QTC_OFFLINE=1 时若本地已有缓存，utils 仍会读取真实缓存，所以不能只看环境变量）"""
+    idx = pd.DatetimeIndex(index)
+    return bool((((idx.month == 1) & (idx.day == 1)) | ((idx.month == 10) & (idx.day <= 3))).any())
 
 TRADING_DAYS = 252
 START, END = "20180101", "20241231"
@@ -141,7 +148,7 @@ def real_moments(rets: dict[str, pd.Series]):
     💡 scipy 与 pandas 的峰度略有差异：pandas 用了无偏修正，大样本下两者几乎相同。
        "模拟·正态"的超额峰度应接近 0，"模拟·t(4)"明显大于 0 —— 它们是两把参照尺。
     """)
-    if is_offline():
+    if is_synthetic(rets["茅台"].index) or is_synthetic(rets["沪深300"].index):
         print("    ⚠️ 离线模式：茅台、沪深300 是正态 GBM 合成数据，峰度会接近 0，看不到真实市场的肥尾；")
         print("       请以'模拟·t(4)'这一行理解肥尾长什么样。")
 
@@ -180,6 +187,7 @@ def normality_tests(rets: dict[str, pd.Series]):
         rows.append([name, f"{jb_stat:.1f}", f"{jb_p:.2e}", f"{sw_p:.2e}", f"{ks_p:.2e}", f"{lf_p:.3f}"])
     print(pd.DataFrame(rows, columns=["序列", "JB 统计量", "JB p", "Shapiro p", "KS p(未修正)", "Lilliefors p"]).to_string(index=False))
     print("\n   注：statsmodels 的 Lilliefors p 值查表得到，范围被截断在 [0.001, 0.2]")
+    print("   注：即使是真正的正态样本，每个检验也有 5% 的概率误拒（第一类错误，03 课），偶尔一个 p < 0.05 不奇怪")
 
     # 大样本下 JB 非常灵敏：t(30) 与正态已经非常接近
     rng = np.random.default_rng(3)
@@ -293,7 +301,7 @@ def price_limit_note(maotai: pd.Series):
        - 连续一字跌停时，你根本卖不出去 → 日收益看起来"只跌了 10%"，实际是连跌多日的流动性风险
        - 只看日收益的峰度和 VaR，会低估这种风险 → 可以同时看多日（如 5 日）收益的分布
     """)
-    if is_offline():
+    if is_synthetic(maotai.index):
         print("    ⚠️ 离线合成数据没有涨跌停限制，上面的最大涨跌幅不代表真实市场")
     r5 = maotai.rolling(5).sum().dropna().iloc[::5]
     print(f"   日收益超额峰度 {stats.kurtosis(maotai):.2f}；不重叠 5 日收益超额峰度 {stats.kurtosis(r5):.2f}"

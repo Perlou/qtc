@@ -50,6 +50,7 @@ OUT_DIR = OUTPUT_DIR / "phase-2"
 
 # 多序列按固定顺序取色（已做色觉障碍校验）；红/绿只用于 A 股涨跌语义
 SERIES_COLORS = ["#2a78d6", "#eb6834", "#1baf7a"]
+DIF_COLOR, DEA_COLOR = "#eb6834", "#4a3aa7"  # 与 MA20（蓝）区分，避免图例里两条蓝线
 UP_COLOR, DOWN_COLOR = "#e34948", "#008300"
 FONT = "PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif"
 
@@ -192,8 +193,8 @@ def build_dashboard(d: pd.DataFrame, title: str, x=None):
 
     hist_color = np.where(d["hist"] >= 0, UP_COLOR, DOWN_COLOR)
     fig.add_trace(go.Bar(x=x, y=d["hist"], name="MACD 柱", marker_color=hist_color, showlegend=False), row=3, col=1)
-    fig.add_trace(go.Scatter(x=x, y=d["dif"], name="DIF", line=dict(width=2, color=SERIES_COLORS[0])), row=3, col=1)
-    fig.add_trace(go.Scatter(x=x, y=d["dea"], name="DEA", line=dict(width=2, color=SERIES_COLORS[1])), row=3, col=1)
+    fig.add_trace(go.Scatter(x=x, y=d["dif"], name="DIF", line=dict(width=2, color=DIF_COLOR)), row=3, col=1)
+    fig.add_trace(go.Scatter(x=x, y=d["dea"], name="DEA", line=dict(width=2, color=DEA_COLOR)), row=3, col=1)
 
     fig.update_xaxes(rangeslider_visible=False)
     fig.update_layout(title=title, template="plotly_white", height=850, hovermode="x unified",

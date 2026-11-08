@@ -289,11 +289,15 @@ def plot_drawdown(navs: pd.DataFrame):
     end = res["recovery_date"] or navs.index[-1]
     axes[0].axvspan(res["peak_date"], end, color="red", alpha=0.08, label=f"{first} 最大回撤区间")
     axes[0].set_yscale("log")
+    # 对数轴：数据不足一个数量级时默认只标 "1"，手动给出常用刻度并显示为普通数字
+    axes[0].set_yticks([t for t in [0.5, 0.6, 0.8, 1, 1.5, 2, 3, 4, 5, 6, 8] if navs.min().min() <= t <= navs.max().max()])
+    axes[0].yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:g}"))
+    axes[0].yaxis.set_minor_formatter(plt.NullFormatter())
     axes[0].set_title("净值（对数坐标）")
     axes[0].legend(fontsize=8)
     axes[1].set_title("水下曲线（回撤）")
     axes[1].yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.0%}"))
-    axes[1].legend(fontsize=8)
+    axes[1].legend(fontsize=8, loc="lower left")
 
     path = save_figure(fig, "07_drawdown_underwater.png", subdir="phase-2")
     print(f"\n🖼️ 图片已保存：{path}")

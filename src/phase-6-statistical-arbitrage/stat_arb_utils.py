@@ -6,8 +6,9 @@ Phase 6 辅助模块：统计套利共用工具
 
 1. 股票配对数据
    - load_bank_panel()          9 只银行股等比后复权收盘价 + 沪深 300 指数
-   - 离线（QTC_OFFLINE=1）或下载失败时，utils 返回的合成行情之间没有协整关系，
-     因此这里改用 synthetic_bank_panel() 构造一组"部分协整"的模拟银行股：
+   - 数据口径与 utils.data、Phase 5 一致：在线、离线都先读本地缓存；离线且无缓存、或下载失败时
+     utils 才返回合成行情（用 utils.data.is_synthetic 识别）。合成行情之间没有协整关系，
+     因此一旦检测到合成行情，这里改用 synthetic_bank_panel() 构造一组"部分协整"的模拟银行股：
      前 4 只（国有大行）共享同一个随机游走因子 + 平稳的个股偏离 → 两两协整；
      其余 5 只的个股偏离是随机游走 → 不协整
 
@@ -20,7 +21,9 @@ Phase 6 辅助模块：统计套利共用工具
    - get_funding_history(...)    永续合约资金费率历史
    - get_crypto_daily(...)       现货 / 永续日线收盘价
    所有下载结果缓存到 data/cache/stat_arb_*.parquet，第二次运行不再请求网络
-   （想刷新数据，删除对应缓存文件即可）。离线或下载失败时回退到合成数据。
+   （想刷新数据，删除对应缓存文件即可）。QTC_OFFLINE=1 时同样先读缓存，
+   缓存不存在才生成合成数据并打印「⚠️ 使用合成数据」；下载失败时也回退到合成数据。
+   used_synthetic() 返回本次运行是否用到过合成数据（用于图表标注）。
 
 ⚠️ 交易成本、融券费率、合约规格均为示例值，以交易所、券商和期货公司最新规则为准。
 ⚠️ 合成数据只用于跑通代码，不能得出任何关于真实市场的结论。
@@ -39,7 +42,8 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from utils.data import CACHE_DIR, get_index_daily, get_stock_daily_adj, is_offline, synthetic_ohlcv  # noqa: E402
+from utils.data import (CACHE_DIR, get_index_daily, get_stock_daily_adj, is_offline, is_synthetic,  # noqa: E402
+                        synthetic_ohlcv)
 
 # ==================== 常量 ====================
 
@@ -68,10 +72,18 @@ BORROW_RATE = 0.08  # 融券年化费率示例，实际费率与券源由券商�
 INDEX_START, INDEX_END = "20100101", "20251231"  # 指数统一用这个区间（与已有缓存一致），再按需切片
 
 _warned: set[str] = set()
+_net_down: set[str] = set()
+_synth_used: set[str] = set()
+
+
+def used_synthetic() -> bool:
+    """本次运行中，本模块是否返回过合成数据（用于图表标注）"""
+    return bool(_synth_used)  # 本次运行中已失败过的数据源：后续请求直接回退，避免反复等待超时
 
 
 def warn_synthetic(label: str, reason: str) -> None:
-    """同一类数据只提示一次"""
+    """记录本次运行用到了合成数据；同一类数据只提示一次"""
+    _synth_used.add(label)
     if label not in _warned:
         print(f"⚠️ 使用合成数据：{label}（{reason}）")
         _warned.add(label)
@@ -90,7 +102,7 @@ def synthetic_bank_panel(symbols: list[str], start: str, end: str, seed: int = 6
 
     log P_i = a_i + b_i · F_t + u_i,t
         F_t：共同因子（随机游走，代表行业 / 市场）
-        u_i,t：前 4 只为 OU 过程（平稳，半衰期约 15–30 天）→ 两两协整，协整系数 b_A / b_B
+        u_i,t：前 4 只为 OU 过程（平稳，半衰期约 8–15 天）→ 两两协整，协整系数 b_A / b_B
                其余为随机游走 → 与任何股票都不协整
     """
     rng = np.random.default_rng(seed)
@@ -102,7 +114,7 @@ def synthetic_bank_panel(symbols: list[str], start: str, end: str, seed: int = 6
         b = rng.uniform(0.85, 1.2)
         level = np.log(rng.uniform(4, 40))
         if i < 4:
-            hl = rng.uniform(15, 30)
+            hl = rng.uniform(8, 15)
             phi = 0.5 ** (1 / hl)
             sd = 0.03
             eps = rng.normal(0, sd * np.sqrt(1 - phi**2), n)
@@ -116,14 +128,6 @@ def synthetic_bank_panel(symbols: list[str], start: str, end: str, seed: int = 6
     return pd.DataFrame(out, index=dates)
 
 
-def _looks_synthetic(symbol: str, close: pd.Series, start: str, end: str) -> bool:
-    """utils 在下载失败时会悄悄返回合成行情：与同参数的 synthetic_ohlcv 对比即可识别"""
-    synth = synthetic_ohlcv(symbol, start, end, start_price=100.0)["close"]
-    if len(synth) != len(close):
-        return False
-    return bool(np.allclose(synth.to_numpy(), close.to_numpy()))
-
-
 def load_bank_panel(symbols: list[str] | None = None, start: str = STOCK_START, end: str = STOCK_END):
     """
     返回 (prices, market, is_synth)
@@ -132,20 +136,22 @@ def load_bank_panel(symbols: list[str] | None = None, start: str = STOCK_START, 
         is_synth: 是否为合成数据
     """
     symbols = symbols or list(BANKS)
-    if is_offline():
-        warn_synthetic("银行股价格", "离线模式 QTC_OFFLINE=1，改用模拟的协整价格组")
-    else:
-        closes, bad = {}, []
-        for s in symbols:
-            df = get_stock_daily_adj(s, start, end)
-            if _looks_synthetic(s, df["close"], start, end):
-                bad.append(s)
-            closes[s] = df["adj_close"]
-        if not bad:
-            prices = pd.DataFrame(closes).sort_index().dropna()
-            idx = get_index_daily("000300", INDEX_START, INDEX_END)["close"]
-            return prices, idx.reindex(prices.index).ffill(), False
-        warn_synthetic("银行股价格", f"{bad} 下载失败；utils 的合成行情之间没有协整关系，改用模拟的协整价格组")
+    closes, bad = {}, []
+    for s in symbols:
+        df = get_stock_daily_adj(s, start, end)  # 与 utils 一致：先读缓存，离线且无缓存 / 下载失败才合成
+        if is_synthetic(df):
+            bad.append(s)
+        closes[s] = df["adj_close"]
+    if not bad:
+        prices = pd.DataFrame(closes).sort_index().dropna()
+        idx = get_index_daily("000300", INDEX_START, INDEX_END)
+        if is_synthetic(idx):  # 指数是合成的：改用银行股等权组合作为"市场"代理
+            warn_synthetic("沪深 300 指数", "无真实数据，市场指数改用银行股等权组合代理")
+            market = 100 * np.exp(np.log(prices / prices.iloc[0]).mean(axis=1))
+        else:
+            market = idx["close"].reindex(prices.index).ffill()
+        return prices, market, False
+    warn_synthetic("银行股价格", f"{bad} 为合成行情；utils 的合成行情之间没有协整关系，改用模拟的协整价格组")
     panel = synthetic_bank_panel(symbols, start, end)
     return panel[symbols], panel["market"], True
 
@@ -157,11 +163,14 @@ def synthetic_coint_pair(
     spread_sd: float = 0.03,
     vol_b: float = 0.015,
     break_at: int | None = None,
+    break_drift: float = 0.0,
+    break_jump: float = 0.0,
     seed: int = 42,
 ) -> pd.DataFrame:
     """
     一对协整的对数价格：log B 为随机游走，log A = 0.5 + beta · log B + s_t，s_t 为 OU 过程
-    break_at：从第 break_at 天起 s_t 变为随机游走（协整断裂）
+    break_at：从第 break_at 天起 s_t 变为随机游走（协整断裂）；
+    break_jump：断裂当天的一次性跳跃（如突发事件）；break_drift：断裂后每天的漂移（基本面持续分化）
     """
     rng = np.random.default_rng(seed)
     dates = pd.bdate_range("2018-01-01", periods=n, name="date")
@@ -170,8 +179,10 @@ def synthetic_coint_pair(
     eps = rng.normal(0, spread_sd * np.sqrt(1 - phi**2), n)
     s = np.zeros(n)
     for t in range(1, n):
-        p = 1.0 if (break_at is not None and t >= break_at) else phi
-        s[t] = p * s[t - 1] + eps[t] * (2.0 if p == 1.0 else 1.0)
+        if break_at is not None and t >= break_at:
+            s[t] = s[t - 1] + break_drift + eps[t] * 2.0 + (break_jump if t == break_at else 0.0)
+        else:
+            s[t] = phi * s[t - 1] + eps[t]
     la = 0.5 + beta * lb + s
     return pd.DataFrame({"A": la, "B": lb}, index=dates)
 
@@ -187,14 +198,20 @@ def ols_hedge(y: pd.Series, x: pd.Series) -> tuple[float, float]:
 
 
 def half_life(spread: pd.Series) -> float:
-    """OU 过程半衰期：回归 Δs_t = a + b · s_{t-1}，h = -ln2 / ln(1+b)；b ≥ 0 时返回 inf"""
+    """
+    OU 过程半衰期：回归 Δs_t = a + b · s_{t-1}，h = -ln2 / ln(1+b)
+    b ≥ 0 时不回归，返回 inf；-2 < b < -1 时 AR 系数为负（来回振荡），按 |1+b| 计算偏离幅度的半衰期
+    """
     s = pd.Series(spread).dropna()
     lag = s.shift(1).iloc[1:]
     delta = s.diff().iloc[1:]
     _, b = ols_hedge(delta, lag)
-    if b >= 0 or b <= -1:
+    phi = abs(1 + b)
+    if b >= 0 or phi >= 1:
         return float("inf")
-    return float(-np.log(2) / np.log(1 + b))
+    if phi < 1e-12:
+        return 0.0
+    return float(-np.log(2) / np.log(phi))
 
 
 def kalman_hedge(y, x, delta: float = 1e-4, ve: float = 1e-3, init=(0.0, 0.0), p0: float = 1.0):
@@ -342,8 +359,8 @@ def _hs300() -> pd.Series:
     return _synth_cache["hs300"]
 
 
-def _dividend_frac(dates: pd.DatetimeIndex, expiry: pd.Timestamp, annual_yield: float = 0.025) -> np.ndarray:
-    """合成用：t 到到期日之间预计除息的分红（占指数比例）。A 股分红集中在 5–8 月"""
+def expected_dividend_frac(dates: pd.DatetimeIndex, expiry: pd.Timestamp, annual_yield: float = 0.025) -> np.ndarray:
+    """t 日之后到到期日之间预计除息的分红（占指数比例）。示例假设：年分红率 annual_yield，A 股分红集中在 5–8 月"""
     weights = {1: 0.01, 2: 0.01, 3: 0.02, 4: 0.03, 5: 0.10, 6: 0.30, 7: 0.35, 8: 0.12, 9: 0.03, 10: 0.01,
                11: 0.01, 12: 0.01}
     days = pd.date_range(dates.min(), expiry, freq="D")
@@ -359,7 +376,7 @@ def _synth_if(dates: pd.DatetimeIndex, expiries: pd.DatetimeIndex) -> np.ndarray
     rng = np.random.default_rng(300)
     tau = np.maximum((expiries - dates).days.to_numpy(), 0) / 365
     pressure = 0.03 + 0.03 * np.sin(np.arange(len(dates)) / 180)  # 对冲需求带来的额外贴水（年化）
-    div = np.array([_dividend_frac(pd.DatetimeIndex([d]), e)[0] for d, e in zip(dates, expiries)])
+    div = np.array([expected_dividend_frac(pd.DatetimeIndex([d]), e)[0] for d, e in zip(dates, expiries)])
     noise = rng.normal(0, 0.0015, len(dates)) * np.sqrt(np.minimum(tau * 12, 1))
     return s * np.exp(0.02 * tau - div - pressure * tau + noise)
 
@@ -404,12 +421,15 @@ def get_future_contract(code: str) -> pd.DataFrame:
     单个期货合约日线（新浪），返回列 close, volume, hold(持仓量)；index 为 date
     缓存：data/cache/stat_arb_fut_{code}.parquet
     """
-    if is_offline():
-        warn_synthetic(f"期货 {parse_contract(code)[0]} 单合约", "离线模式 QTC_OFFLINE=1")
-        return _synth_contract(code)
     path = _cache(f"fut_{code}")
-    if path.exists():
+    if path.exists():  # 与 utils.data 一致：在线、离线都先读本地缓存
         return pd.read_parquet(path)
+    if is_offline():
+        warn_synthetic(f"期货 {parse_contract(code)[0]} 单合约", "离线模式 QTC_OFFLINE=1 且无本地缓存")
+        return _synth_contract(code)
+    if "sina" in _net_down:
+        warn_synthetic(f"期货 {code}", "新浪数据源此前已下载失败")
+        return _synth_contract(code)
     try:
         import akshare as ak
 
@@ -422,6 +442,8 @@ def get_future_contract(code: str) -> pd.DataFrame:
         df.to_parquet(path)
         return df
     except Exception as e:  # 网络异常种类繁多，统一回退
+        if not isinstance(e, ValueError):
+            _net_down.add("sina")
         warn_synthetic(f"期货 {code}", f"下载失败 {type(e).__name__}: {str(e)[:60]}")
         return _synth_contract(code)
 
@@ -439,12 +461,15 @@ def get_if_main(start: str = "20190101", end: str = "20251231") -> pd.Series:
             exp.append(e)
         return pd.Series(_synth_if(s.index, pd.DatetimeIndex(exp)), index=s.index, name="close")
 
-    if is_offline():
-        warn_synthetic("股指期货 IF0", "离线模式 QTC_OFFLINE=1")
-        return synth()
     path = _cache(f"if0_{start}_{end}")
-    if path.exists():
+    if path.exists():  # 与 utils.data 一致：在线、离线都先读本地缓存
         return pd.read_parquet(path)["close"]
+    if is_offline():
+        warn_synthetic("股指期货 IF0", "离线模式 QTC_OFFLINE=1 且无本地缓存")
+        return synth()
+    if "sina" in _net_down:
+        warn_synthetic("股指期货 IF0", "新浪数据源此前已下载失败")
+        return synth()
     try:
         import akshare as ak
 
@@ -456,6 +481,7 @@ def get_if_main(start: str = "20190101", end: str = "20251231") -> pd.Series:
         df.to_parquet(path)
         return df["close"]
     except Exception as e:
+        _net_down.add("sina")
         warn_synthetic("股指期货 IF0", f"下载失败 {type(e).__name__}: {str(e)[:60]}")
         return synth()
 
@@ -466,6 +492,8 @@ def get_if_main(start: str = "20190101", end: str = "20251231") -> pd.Series:
 def _ccxt_exchange(exchange_id: str):
     """同一交易所只创建一个实例并加载一次市场信息（加载失败重试一次）"""
     key = f"ccxt_{exchange_id}"
+    if key in _net_down:
+        raise ConnectionError(f"{exchange_id} 此前已连接失败")
     if key not in _synth_cache:
         import ccxt
 
@@ -477,7 +505,11 @@ def _ccxt_exchange(exchange_id: str):
         try:
             ex.load_markets()
         except Exception:
-            ex.load_markets(reload=True)
+            try:
+                ex.load_markets(reload=True)
+            except Exception:
+                _net_down.add(key)
+                raise
         _synth_cache[key] = ex
     return _synth_cache[key]
 
@@ -506,12 +538,12 @@ def get_funding_history(exchange_id: str = "okx", symbol: str = "BTC/USDT:USDT",
     end = pd.Timestamp.now(tz="UTC")
     start = pd.Timestamp(since, tz="UTC") if since else end - pd.Timedelta(days=90)
     tag = f"{exchange_id}_{symbol.split('/')[0]}_{since or 'recent'}"
-    if is_offline():
-        warn_synthetic(f"资金费率 {exchange_id} {symbol}", "离线模式 QTC_OFFLINE=1")
-        return _synth_funding(tag, start, end)
     path = _cache(f"funding_{tag}")
-    if path.exists():
+    if path.exists():  # 与 utils.data 一致：在线、离线都先读本地缓存
         return pd.read_parquet(path)["funding_rate"]
+    if is_offline():
+        warn_synthetic(f"资金费率 {exchange_id} {symbol}", "离线模式 QTC_OFFLINE=1 且无本地缓存")
+        return _synth_funding(tag, start, end)
     try:
         ex = _ccxt_exchange(exchange_id)
         cursor, rows = int(start.timestamp() * 1000), []
@@ -541,12 +573,12 @@ def get_funding_history(exchange_id: str = "okx", symbol: str = "BTC/USDT:USDT",
 def get_crypto_daily(exchange_id: str = "okx", symbol: str = "BTC/USDT", limit: int = 300) -> pd.Series:
     """日线收盘价（UTC），丢弃最后一根未收盘 K 线；缓存 stat_arb_ohlcv_{exchange}_{symbol}.parquet"""
     safe = symbol.replace("/", "-").replace(":", "_")
-    if is_offline():
-        warn_synthetic(f"加密日线 {symbol}", "离线模式 QTC_OFFLINE=1")
-        return _synth_crypto(symbol, limit)
     path = _cache(f"ohlcv_{exchange_id}_{safe}")
-    if path.exists():
+    if path.exists():  # 与 utils.data 一致：在线、离线都先读本地缓存
         return pd.read_parquet(path)["close"]
+    if is_offline():
+        warn_synthetic(f"加密日线 {symbol}", "离线模式 QTC_OFFLINE=1 且无本地缓存")
+        return _synth_crypto(symbol, limit)
     try:
         ex = _ccxt_exchange(exchange_id)
         bars = ex.fetch_ohlcv(symbol, timeframe="1d", limit=limit)

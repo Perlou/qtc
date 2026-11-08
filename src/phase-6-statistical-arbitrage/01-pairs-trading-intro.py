@@ -20,7 +20,8 @@
 
 环境要求：
     - pip install akshare pandas numpy statsmodels matplotlib
-    - 无网络时可用 QTC_OFFLINE=1 运行（使用模拟的协整价格组）
+    - 无网络时可用 QTC_OFFLINE=1 运行：优先读本地缓存；无缓存时 utils 返回合成行情，
+      本课检测到后改用模拟的协整价格组（打印 ⚠️ 使用合成数据）
 """
 
 import itertools
@@ -39,7 +40,7 @@ from dotenv import load_dotenv
 from statsmodels.tsa.stattools import coint
 
 from stat_arb_utils import BANKS, FORM_END, STOCK_END, STOCK_START, TEST_START, load_bank_panel, ols_hedge
-from utils.data import get_etf_daily, is_offline, synthetic_ohlcv
+from utils.data import get_etf_daily, is_synthetic
 from utils.plotting import save_figure, setup_chinese_font
 
 load_dotenv()
@@ -93,7 +94,7 @@ def pairs_principle(logp: pd.DataFrame, market: pd.Series):
          pair_ret.std() * np.sqrt(252)],
     ]
     df = pd.DataFrame(rows, columns=["资产", "对市场 Beta", "与市场相关系数", "年化波动"]).round(3)
-    print(f"📊 对冲比 β（形成期 OLS）= {beta:.3f}；市场指数：沪深 300（合成模式下为合成市场因子）")
+    print(f"📊 对冲比 β（形成期 OLS）= {beta:.3f}；市场指数：沪深 300（无真实数据时为代理，见上方 ⚠️ 提示）")
     print(df.to_string(index=False))
     print("""
     💡 配对组合的市场 Beta 明显小于单只股票：大盘涨跌被多空两条腿大致抵消，
@@ -283,15 +284,11 @@ def a_share_constraints():
       4. 港股、美股等做空便利的市场
     """)
 
-    if is_offline():
-        print("⏭️  离线模式：跳过 ETF 配对的真实数据演示")
-        return
     etfs = {}
     for code, label in [("510300", "华泰柏瑞沪深300ETF"), ("159919", "嘉实沪深300ETF")]:
-        df = get_etf_daily(code, STOCK_START, STOCK_END, adjust="hfq")
-        synth = synthetic_ohlcv(code, STOCK_START, STOCK_END, start_price=4.0, annual_vol=0.20)["close"]
-        if len(synth) == len(df) and np.allclose(synth.to_numpy(), df["close"].to_numpy()):
-            print("⏭️  ETF 数据不可用（合成数据没有意义），跳过演示")
+        df = get_etf_daily(code, STOCK_START, STOCK_END, adjust="hfq")  # 先读缓存，离线且无缓存才合成
+        if is_synthetic(df):
+            print("⏭️  ETF 为合成数据（两条独立合成序列之间的配对没有意义），跳过演示")
             return
         etfs[f"{code} {label}"] = np.log(df["close"])
     pair = pd.DataFrame(etfs).dropna()

@@ -308,6 +308,10 @@ def plot_panel(wide: pd.DataFrame, corr: pd.DataFrame):
     for code in norm.columns:
         axes[0].plot(norm.index, norm[code], lw=1, label=f"{code} {STOCKS[code]}")
     axes[0].set_yscale("log")
+    # 对数轴：数据不足一个数量级时默认只标 "1"，手动给出常用刻度并显示为普通数字
+    axes[0].set_yticks([t for t in [0.5, 0.6, 0.8, 1, 1.5, 2, 3, 4, 5, 6, 8] if norm.min().min() <= t <= norm.max().max()])
+    axes[0].yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:g}"))
+    axes[0].yaxis.set_minor_formatter(plt.NullFormatter())
     axes[0].set_title("归一化净值（对数坐标）")
     axes[0].legend(fontsize=8)
 

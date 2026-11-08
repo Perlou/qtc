@@ -21,7 +21,7 @@
 
 环境要求：
     - pip install akshare pandas numpy matplotlib
-    - 无网络时可用 QTC_OFFLINE=1 运行（使用合成数据）
+    - 无网络时可用 QTC_OFFLINE=1 运行（有本地缓存时读缓存，否则使用合成数据）
     ⚠️ 合约乘数、保证金比例等为示例值，以交易所和期货公司最新规定为准
 """
 
@@ -35,7 +35,7 @@ import numpy as np
 import pandas as pd
 from dotenv import load_dotenv
 
-from cta_utils import (SPECS, UNIVERSE, _wide, build_continuous, get_contracts, get_continuous, get_main_sina,
+from cta_utils import (SPECS, UNIVERSE, wide_panel, build_continuous, get_contracts, get_continuous, get_main_sina,
                        select_main)
 from utils.plotting import save_figure, setup_chinese_font
 
@@ -147,7 +147,7 @@ def main_contract_selection(symbol: str = "RB", year: int = 2024):
     ❌ 常见错误：用"今天"的持仓量决定"今天"的主力 —— 今天收盘前你不可能知道
     """)
     raw = get_contracts(symbol)
-    oi, close = _wide(raw, "hold"), _wide(raw, "close")
+    oi, close = wide_panel(raw, "hold"), wide_panel(raw, "close")
     main = select_main(oi, close)
     cheat = oi.where(close.notna()).fillna(-1).idxmax(axis=1)  # 未来函数版：当天持仓量，且可回切
 
@@ -200,7 +200,7 @@ def back_adjustment(cont: pd.DataFrame, sina: pd.DataFrame, symbol: str = "RB"):
 
     # 验证：比例调整连续价在换月日的收益 = 新合约的真实收益（前一日已按新合约计）
     raw = get_contracts(symbol)
-    close_w = _wide(raw, "close")
+    close_w = wide_panel(raw, "close")
     errs = []
     for d in rolls.index:
         i = cont.index.get_loc(d)

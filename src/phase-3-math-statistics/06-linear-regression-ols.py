@@ -36,10 +36,17 @@ from dotenv import load_dotenv
 from statsmodels.stats.diagnostic import acorr_ljungbox, het_breuschpagan
 from statsmodels.stats.outliers_influence import variance_inflation_factor
 
-from utils.data import get_close_panel, get_index_daily, is_offline
+from utils.data import get_close_panel, get_index_daily
 from utils.plotting import save_figure, setup_chinese_font
 
 load_dotenv()
+
+
+def is_synthetic(index) -> bool:
+    """utils 的合成数据用工作日近似交易日：出现元旦、国庆前三天这类 A 股休市日，说明拿到的是合成数据。
+    （QTC_OFFLINE=1 时若本地已有缓存，utils 仍会读取真实缓存，所以不能只看环境变量）"""
+    idx = pd.DatetimeIndex(index)
+    return bool((((idx.month == 1) & (idx.day == 1)) | ((idx.month == 10) & (idx.day <= 3))).any())
 
 TRADING_DAYS = 252
 START, END = "20180101", "20241231"
@@ -123,7 +130,7 @@ def multi_regression(data: pd.DataFrame):
     print(f"💡 加入板块因子后 R² 从单因子的 {single.rsquared:.3f} 变为 {model.rsquared:.3f}；"
           f"沪深300 的系数从 {single.params['mkt']:.3f} 变为 {model.params['mkt']:.3f}。")
     print("   当两个自变量相关时，每个系数表示的是'控制另一个变量后'的边际影响，与单变量回归的含义不同。")
-    if is_offline():
+    if is_synthetic(data.index):
         print("   ⚠️ 离线合成数据中各序列彼此独立，系数与 R² 接近 0，仅用于跑通流程")
     return model, X
 

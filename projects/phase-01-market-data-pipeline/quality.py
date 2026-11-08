@@ -24,7 +24,7 @@ TOLERANCE = 0.005  # 涨跌幅容差，覆盖价格四舍五入
 
 def limit_pct(symbol: str) -> float:
     """板块涨跌幅限制（不区分 ST 与新股上市初期，这两类会产生可解释的越界告警）"""
-    if symbol.startswith(("688", "689", "300", "301")):
+    if symbol.startswith(("688", "689", "30")):
         return 0.20
     if symbol.startswith(("8", "4", "92")):
         return 0.30

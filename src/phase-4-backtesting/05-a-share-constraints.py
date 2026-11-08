@@ -129,9 +129,12 @@ def price_limit_demo(bars: dict):
         raw_prev = df["close"].iloc[i - 1]
         ref = df["pre_close"].iloc[i]
         rows.append([d.date(), raw_prev, ref, limit_prices(raw_prev, 0.10)[1], limit_prices(ref, 0.10)[1], df["low"].iloc[i]])
-    print(pd.DataFrame(rows, columns=["除息日", "昨收(不复权)", "除权参考价", "跌停价(用昨收,错)",
-                                      "跌停价(用参考价)", "当日最低"]).to_string(index=False))
-    print("   用错前收盘，涨跌停价会整体偏移一个分红金额 → 除息日的约束判断全错")
+    if rows:
+        print(pd.DataFrame(rows, columns=["除息日", "昨收(不复权)", "除权参考价", "跌停价(用昨收,错)",
+                                          "跌停价(用参考价)", "当日最低"]).to_string(index=False))
+        print("   用错前收盘，涨跌停价会整体偏移一个分红金额 → 除息日的约束判断全错")
+    else:
+        print("   （当前数据没有除权除息事件 —— 离线合成数据的复权因子恒为 1，联网运行可看到真实案例）")
 
     print("\n📊 各股票触及涨跌停的天数（收盘价 = 涨/跌停价；一字板 = 开高低收全等于涨/跌停价）：")
     rows = []

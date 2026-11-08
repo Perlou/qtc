@@ -75,7 +75,7 @@ def get_board(symbol: str, is_st: bool = False, trade_date: str | None = None) -
     """
     if symbol.startswith(("688", "689")):
         return BoardRule("科创板", 0.20, 200, 1)
-    if symbol.startswith(("300", "301")):
+    if symbol.startswith("30"):
         return BoardRule("创业板", 0.20, 100, 100)
     if symbol.startswith(("8", "4", "92")):
         return BoardRule("北交所", 0.30, 100, 1)
@@ -91,9 +91,15 @@ def round_price(x: float) -> float:
     return float(Decimal(str(x)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
 
 
+def round_price_exact(prev_close: float, pct: float) -> float:
+    """用 Decimal 从原始价格开始计算 prev_close × (1 + pct)，再四舍五入到分，避免浮点误差"""
+    value = Decimal(str(prev_close)) * (Decimal(1) + Decimal(str(pct)))
+    return float(value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+
+
 def limit_prices(prev_close: float, limit_pct: float) -> tuple[float, float]:
     """计算涨停价与跌停价"""
-    return round_price(prev_close * (1 + limit_pct)), round_price(prev_close * (1 - limit_pct))
+    return round_price_exact(prev_close, limit_pct), round_price_exact(prev_close, -limit_pct)
 
 
 def price_limits_demo():
@@ -108,7 +114,7 @@ def price_limits_demo():
     ├──────────────┼──────────┼──────────────────────────────────┤
     │ 沪市主板     │ ±10%     │ 600 / 601 / 603 / 605            │
     │ 深市主板     │ ±10%     │ 000 / 001 / 002 / 003            │
-    │ 创业板       │ ±20%     │ 300 / 301                        │
+    │ 创业板       │ ±20%     │ 300 / 301 / 302                  │
     │ 科创板       │ ±20%     │ 688 / 689                        │
     │ 北交所       │ ±30%     │ 8 / 4 / 92 开头                  │
     └──────────────┴──────────┴──────────────────────────────────┘
@@ -116,7 +122,7 @@ def price_limits_demo():
     主板 ST / *ST 股：2026-07-06 起由 ±5% 调整为 ±10%（回测 2026 年 7 月之前的数据要用 ±5%）。
     """)
 
-    examples = [("600519", 1500.00), ("300750", 200.00), ("688981", 85.55), ("000001", 10.05)]
+    examples = [("600519", 1500.00), ("300750", 200.00), ("688981", 85.55), ("000001", 7.55)]
     rows = []
     for symbol, prev in examples:
         board = get_board(symbol)
@@ -125,9 +131,11 @@ def price_limits_demo():
     print(pd.DataFrame(rows, columns=["代码", "板块", "前收盘", "涨停价", "跌停价"]).to_string(index=False))
 
     print(f"""
-    🔍 四舍五入细节：10.05 × 1.1 = {10.05 * 1.1!r}
-       Python round(11.055, 2) = {round(11.055, 2)}，交易所规则四舍五入 = {round_price(10.05 * 1.1)}
-       浮点误差 + 舍入方式不同，会让你的涨停判断差 1 分钱 —— 回测里要用 Decimal
+    🔍 四舍五入细节：前收盘 7.55 的主板股票，涨停价 = 7.55 × 1.1 = 8.305 → 应为 8.31
+       浮点计算 7.55 * 1.1 = {7.55 * 1.1!r}（二进制无法精确表示，实际略小于 8.305）
+       Python round(7.55 * 1.1, 2) = {round(7.55 * 1.1, 2)}  ❌
+       Decimal 精确计算 + 四舍五入 = {round_price_exact(7.55, 0.10)}  ✅
+       差 1 分钱就会把涨停误判为"未涨停" —— 回测里要用 Decimal 从原始价格开始计算
 
     📌 量化相关：
     - 涨停时往往只有卖单排队吃不到 → 回测里"涨停买入"通常不应假设成交

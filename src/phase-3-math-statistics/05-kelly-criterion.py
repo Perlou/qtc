@@ -38,6 +38,13 @@ from utils.plotting import save_figure, setup_chinese_font
 
 load_dotenv()
 
+
+def is_synthetic(index) -> bool:
+    """utils 的合成数据用工作日近似交易日：出现元旦、国庆前三天这类 A 股休市日，说明拿到的是合成数据。
+    （QTC_OFFLINE=1 时若本地已有缓存，utils 仍会读取真实缓存，所以不能只看环境变量）"""
+    idx = pd.DatetimeIndex(index)
+    return bool((((idx.month == 1) & (idx.day == 1)) | ((idx.month == 10) & (idx.day <= 3))).any())
+
 TRADING_DAYS = 252
 START, END = "20100101", "20251231"
 
@@ -121,6 +128,8 @@ def trade_stats():
        判断是否赚钱，要比较"胜率"和"盈亏平衡胜率"，而不是看胜率是否超过 50%。
        ⚠️ 交易笔数只有几十到一两百笔时，胜率和盈亏比本身的估计误差就很大（回忆 03 课）。
     """)
+    if is_synthetic(close.index):
+        print("    ⚠️ 离线合成数据（GBM）：以上数字只用于跑通流程，不代表真实市场")
 
 
 # ==================== 第三部分：凯利公式 ====================
@@ -245,6 +254,8 @@ def continuous_kelly():
         rows.append([f"{lev:g} 倍", f"{cagr:+.2%}", f"{r.std() * np.sqrt(TRADING_DAYS):.1%}", f"{mdd:.1%}"])
     print(pd.DataFrame(rows, columns=["杠杆", "年化复合收益", "年化波动", "最大回撤"]).to_string(index=False))
     best = max(cagrs, key=cagrs.get)
+    if is_synthetic(close.index):
+        print("   ⚠️ 离线合成数据（GBM）的 μ 是人为设定的，以下结果不代表真实市场")
     print(f"   本样本中复合收益最高的杠杆档位：{best:g} 倍（事后用全样本 μ、σ 算出的 f* = {f_star:.2f}）")
     print("""
     💡 μ 的估计误差极大（01、03 课）：μ 稍有高估，凯利杠杆就会成倍放大。

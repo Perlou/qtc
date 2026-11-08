@@ -21,7 +21,7 @@
 
 环境要求：
     - pip install akshare pandas numpy scipy matplotlib
-    - 无网络时可用 QTC_OFFLINE=1 运行（使用合成数据）
+    - 无网络时可用 QTC_OFFLINE=1 运行（有本地缓存时读缓存，否则使用合成数据）
 """
 
 import sys
@@ -126,15 +126,20 @@ def plateau_vs_peak(grid: pd.DataFrame, s: str = "RB"):
     ratio = neigh.stack().mean() / grid.loc[f, sl] if grid.loc[f, sl] > 0 else np.nan
     print(f"""
     单点最优：快线 {best_raw[0]} / 慢线 {best_raw[1]}，Sharpe {grid.loc[best_raw]:.2f}
-       它的 3×3 邻居平均 Sharpe {neigh.stack().mean():.2f}，是最优值的 {ratio:.0%}
+       它的 3×3 邻居（只算网格内的有效格子）平均 Sharpe {neigh.stack().mean():.2f}，是最优值的 {ratio:.0%}
        （经验参考：邻域平均不低于最优值的 70% 左右，才算处在"平原"上）
-    平滑后最优：快线 {best_sm[0]} / 慢线 {best_sm[1]}，原始 Sharpe {grid.loc[best_sm]:.2f}，邻域平均 {sm.loc[best_sm]:.2f}
+       按保守平滑口径（边界外、无效格子记为全表最小值），它的平滑值为 {sm.loc[best_raw]:.2f}
+    平滑后最优：快线 {best_sm[0]} / 慢线 {best_sm[1]}，原始 Sharpe {grid.loc[best_sm]:.2f}，平滑值 {sm.loc[best_sm]:.2f}
     """)
     print("📊 3×3 邻域平均后的热力图：")
     print(sm.round(2).to_string(na_rep="  -"))
     print("""
     💡 平滑后的最优点问的是："哪个参数及其邻居平均表现最好？"
        它天然偏向平坦区域，对"未来参数最优点漂移"更不敏感。
+    """)
+    if sm.max().max() < 0.3:
+        print(f"""    ⚠️ 注意：平滑后的最高值只有 {sm.max().max():.2f}。"平原"说明结果对参数不敏感，但不等于"能赚钱" ——
+       如果整片平原都在 0 附近，结论应该是"这个策略在这个品种、这段时间上没有明显效果"，而不是去找更好的参数。
     """)
     return sm
 
